@@ -5,6 +5,8 @@ from typing import List, Dict
 # 配置 HuggingFace 相关的环境变量（确保直接使用下载好的本地缓存）
 os.environ['HF_HOME'] = r'D:\my_huggingface_cache'
 os.environ['SENTENCE_TRANSFORMERS_HOME'] = r'D:\my_huggingface_cache'
+os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
 
 # 导入 sentence_transformers
 from sentence_transformers import SentenceTransformer
