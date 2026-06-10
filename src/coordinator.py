@@ -24,12 +24,12 @@ class RAGCoordinator:
         # 1. 读文件内容
         text = self.loader.load(file_path)
         if not text:
-            return
+            raise ValueError(f"无法从文件中提取任何文本，请检查文件是否为空或属于未OCR的扫描件: {file_path}")
 
         # 2. 切出父子块（列表中每个字典包含 child_text, parent_text, parent_id）
         chunks = self.splitter.create_parent_child_chunks(text)
         if not chunks:
-            return
+            raise ValueError(f"未能为该文件生成任何有效的语义切片块: {file_path}")
 
         # 获取源文件绝对路径和文件名
         source_path = os.path.abspath(file_path)
