@@ -162,3 +162,17 @@ def my_complex_function(x, y):
             
     assert code_found is True
 
+
+def test_markdown_parent_size_guarantee():
+    mock_embedding = MockEmbeddingService()
+    splitter = SemanticParentChildSplitter(embedding_service=mock_embedding, threshold=0.5, child_size=100)
+    
+    # 这里的文本很短，总长度 < 150 字符
+    markdown_text = "# 第一部分\n\n这是第二部分内容。"
+    
+    chunks = splitter.create_parent_child_chunks(markdown_text, is_markdown=True)
+    parents = list(set(chunk["parent_text"] for chunk in chunks))
+    
+    # 断言超短 parent 块会被合并，使得最后只有一个 parent chunk
+    assert len(parents) == 1
+

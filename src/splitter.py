@@ -296,6 +296,27 @@ class SemanticParentChildSplitter:
             if current_chunk:
                 parent_chunks.append("".join(current_chunk))
                 
+        # 4.5 兜底合并超短 parent_chunks (保证召回丰富文本，最小 150 字符，仅在 markdown 模式下启用以避免破坏传统文本基准测试)
+        if is_markdown:
+            min_parent_size = 150
+            merged_parents = []
+            temp_parent = ""
+            for p_chunk in parent_chunks:
+                if not temp_parent:
+                    temp_parent = p_chunk
+                else:
+                    if len(temp_parent) < min_parent_size:
+                        temp_parent = temp_parent.rstrip('\n') + '\n' + p_chunk.lstrip('\n')
+                    else:
+                        merged_parents.append(temp_parent)
+                        temp_parent = p_chunk
+            if temp_parent:
+                if merged_parents and len(temp_parent) < min_parent_size:
+                    merged_parents[-1] = merged_parents[-1].rstrip('\n') + '\n' + temp_parent.lstrip('\n')
+                else:
+                    merged_parents.append(temp_parent)
+            parent_chunks = merged_parents
+
         # 5. 生成 Parent-Child 映射并还原占位符
         result = []
         
