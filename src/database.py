@@ -65,41 +65,52 @@ class ChromaAdapter(VectorStoreAdapter):
         self._rebuild_bm25()
 
     def hybrid_search(self, dense_vec: List[float], sparse_vec: Dict[str, float], top_k: int) -> List[Dict[str, Any]]:
-        """双通道混合检索与去重"""
-        # 1. Dense 检索
-        dense_candidates = []
-        count = self.collection.count()
-        if count > 0:
-            n_results = min(top_k * 2, count)
-            chroma_results = self.collection.query(
-                query_embeddings=[dense_vec],
-                n_results=n_results,
-                include=["documents", "metadatas", "distances"]
-            )
-            if chroma_results["documents"] and chroma_results["documents"][0]:
-                for i, doc in enumerate(chroma_results["documents"][0]):
-                    dense_candidates.append({
-                        "content": doc,
-                        "metadata": chroma_results["metadatas"][0][i],
-                        "score": 1.0 - chroma_results["distances"][0][i]  # cosine 余弦距离转化为相似度分数
-                    })
+        """双通道混合检索与去重 (使用 ThreadPoolExecutor 并行化检索)"""
+        from concurrent.futures import ThreadPoolExecutor
 
-        # 2. Sparse 检索
-        sparse_candidates = []
-        if self.bm25 and len(sparse_vec) > 0:
-            query_tokens = list(sparse_vec.keys())
-            scores = self.bm25.get_scores(query_tokens)
-            
-            # 按 BM25 分数排序，选出分数前 top_k * 2 的子块
-            top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k * 2]
-            for idx in top_indices:
-                if scores[idx] > 0:
-                    doc_info = self.bm25_docs[idx]
-                    sparse_candidates.append({
-                        "content": doc_info["document"],
-                        "metadata": doc_info["metadata"],
-                        "score": float(scores[idx])
-                    })
+        def _search_dense():
+            candidates = []
+            count = self.collection.count()
+            if count > 0:
+                n_results = min(top_k * 2, count)
+                chroma_results = self.collection.query(
+                    query_embeddings=[dense_vec],
+                    n_results=n_results,
+                    include=["documents", "metadatas", "distances"]
+                )
+                if chroma_results["documents"] and chroma_results["documents"][0]:
+                    for i, doc in enumerate(chroma_results["documents"][0]):
+                        candidates.append({
+                            "content": doc,
+                            "metadata": chroma_results["metadatas"][0][i],
+                            "score": 1.0 - chroma_results["distances"][0][i]  # cosine 余弦距离转化为相似度分数
+                        })
+            return candidates
+
+        def _search_sparse():
+            candidates = []
+            if self.bm25 and len(sparse_vec) > 0:
+                query_tokens = list(sparse_vec.keys())
+                scores = self.bm25.get_scores(query_tokens)
+                
+                # 按 BM25 分数排序，选出分数前 top_k * 2 的子块
+                top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k * 2]
+                for idx in top_indices:
+                    if scores[idx] > 0:
+                        doc_info = self.bm25_docs[idx]
+                        candidates.append({
+                            "content": doc_info["document"],
+                            "metadata": doc_info["metadata"],
+                            "score": float(scores[idx])
+                        })
+            return candidates
+
+        # 并发启动双通道初筛检索
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_dense = executor.submit(_search_dense)
+            future_sparse = executor.submit(_search_sparse)
+            dense_candidates = future_dense.result()
+            sparse_candidates = future_sparse.result()
 
         # 3. 去重与合并：根据 parent_id 过滤去重，最终返回候选子块列表
         merged = {}

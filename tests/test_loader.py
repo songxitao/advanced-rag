@@ -10,6 +10,13 @@ def test_document_loader_txt(tmp_path):
     text = loader.load(str(test_file))
     assert text == "Hello 早稻田 IPS 和东南大学"
 
+def test_document_loader_md(tmp_path):
+    test_file = tmp_path / "test.md"
+    test_file.write_text("# Hello Markdown\n- item 1\n- item 2", encoding="utf-8")
+    loader = DocumentLoader()
+    text = loader.load(str(test_file))
+    assert text == "# Hello Markdown\n- item 1\n- item 2"
+
 def test_document_loader_file_not_found():
     loader = DocumentLoader()
     with pytest.raises(FileNotFoundError):

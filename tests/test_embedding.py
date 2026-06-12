@@ -10,3 +10,11 @@ def test_embedding_service():
     assert len(dense) == 1024  # BGE-M3 的标准稠密向量是 1024 维
     assert isinstance(sparse, dict)
     assert len(sparse) > 0
+
+def test_embedding_service_batch():
+    service = LocalEmbeddingService(device="cpu")
+    texts = ["测试早稻田", "测试东大"]
+    dense_list = service.get_dense_embeddings_batch(texts)
+    assert len(dense_list) == 2
+    assert len(dense_list[0]) == 1024
+    assert len(dense_list[1]) == 1024

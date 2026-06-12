@@ -26,8 +26,10 @@ class RAGCoordinator:
         if not text:
             raise ValueError(f"无法从文件中提取任何文本，请检查文件是否为空或属于未OCR的扫描件: {file_path}")
 
-        # 2. 切出父子块（列表中每个字典包含 child_text, parent_text, parent_id）
-        chunks = self.splitter.create_parent_child_chunks(text)
+        # 2. 根据扩展名判定是否为 Markdown 文件，并切出父子块
+        ext = os.path.splitext(file_path)[1].lower()
+        is_markdown = (ext == '.md')
+        chunks = self.splitter.create_parent_child_chunks(text, is_markdown=is_markdown)
         if not chunks:
             raise ValueError(f"未能为该文件生成任何有效的语义切片块: {file_path}")
 
@@ -57,11 +59,9 @@ class RAGCoordinator:
             chunk["char_start"] = start_idx
             chunk["char_end"] = end_idx
 
-        # 4. 调用 embedding_service 生成每个子块的 Dense 向量
-        dense_embeddings = [
-            self.embedding_service.get_dense_embedding(chunk["child_text"])
-            for chunk in chunks
-        ]
+        # 4. 调用 embedding_service 生成每个子块的 Dense 向量 (使用批量并行接口)
+        child_texts = [chunk["child_text"] for chunk in chunks]
+        dense_embeddings = self.embedding_service.get_dense_embeddings_batch(child_texts)
 
         # 5. 调用 db_adapter 持久化入库
         self.db_adapter.add_chunks(chunks, dense_embeddings)

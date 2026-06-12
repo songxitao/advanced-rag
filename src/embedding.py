@@ -43,6 +43,17 @@ class LocalEmbeddingService:
         # BGE-M3 的标准稠密向量维度是 1024 维，如果是一维 ndarray，转换为 list 即可
         return embedding.tolist()
 
+    def get_dense_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """
+        批量获取 texts 的 dense 向量 (1024维)
+        :param texts: 输入文本列表
+        :return: 稠密向量列表
+        """
+        if not texts:
+            return []
+        embeddings = self.model.encode(texts, convert_to_numpy=True)
+        return embeddings.tolist()
+
     def get_sparse_embedding(self, text: str) -> Dict[str, float]:
         """
         利用 self.model.tokenizer 提取 text 的分词，并自动计算这些 token 在当前短语中的词频分配

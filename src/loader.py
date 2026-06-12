@@ -10,7 +10,7 @@ class DocumentLoader:
         
         ext = os.path.splitext(file_path)[1].lower()
         
-        if ext == '.txt':
+        if ext in ['.txt', '.md']:
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read()
                 
