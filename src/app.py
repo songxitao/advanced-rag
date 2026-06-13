@@ -30,15 +30,8 @@ def startup_event():
     """在服务启动时延迟加载 RAG 组件，支持测试时注入 Mock 实例"""
     if not hasattr(app.state, "coordinator") or app.state.coordinator is None:
         print("正在初始化全局生产 RAG 编排器（离线模式）...")
-        # 探测硬件设备，优先使用 GPU/CUDA
+        # 强制使用 CPU 部署，避免因本地大模型显存占满而导致 GPU OOM 溢出
         device = "cpu"
-        try:
-            import torch
-            if torch.cuda.is_available():
-                device = "cuda"
-        except ImportError:
-            pass
-
         print(f"RAG 模型加载运行设备定位为: {device}")
         
         # 局部导入以避免在测试不需要加载模型时拖慢启动速度
