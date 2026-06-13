@@ -2,6 +2,8 @@ import os
 import sys
 import subprocess
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 STAGES = {
     "1": ("Stage 1: tests/evaluation_set_generator.py", "tests/evaluation_set_generator.py"),
     "2": ("Stage 2: tests/run_retrieval.py", "tests/run_retrieval.py"),
@@ -11,9 +13,10 @@ STAGES = {
 
 def run_script(script_path):
     print(f"\n>>> Running {script_path}...")
+    abs_script_path = os.path.join(PROJECT_ROOT, script_path)
     try:
         # Use sys.executable to ensure we run in the same virtual environment
-        result = subprocess.run([sys.executable, script_path])
+        result = subprocess.run([sys.executable, abs_script_path], cwd=PROJECT_ROOT)
         if result.returncode == 0:
             print(f"\n>>> {script_path} finished successfully.")
             return True
@@ -28,8 +31,9 @@ def run_stage(key):
     if key not in STAGES:
         return False
     name, path = STAGES[key]
-    if not os.path.exists(path):
-        print(f"\n>>> Error: Script not found at {path}")
+    abs_path = os.path.join(PROJECT_ROOT, path)
+    if not os.path.exists(abs_path):
+        print(f"\n>>> Error: Script not found at {abs_path}")
         return False
     return run_script(path)
 
@@ -67,7 +71,7 @@ def main():
         elif choice == 'A':
             print("\n>>> Running all stages in sequence...")
             all_success = True
-            for key in sorted(STAGES.keys()):
+            for key in STAGES.keys():
                 if not run_stage(key):
                     print(f"\n>>> Pipeline stopped: Stage {key} failed or missing.")
                     all_success = False
