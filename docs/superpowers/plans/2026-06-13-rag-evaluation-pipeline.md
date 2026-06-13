@@ -180,7 +180,7 @@
   ```
 
 - [ ] **Step 3: Run generator logic to output dataset**
-  Run: `cmd /c ""D:\program files\Miniconda\Scripts\activate.bat"" && conda activate translator_env && python tests/evaluation_set_generator.py`
+  Run: `cmd /c ""D:\program files\Miniconda\Scripts\activate.bat"" && conda activate deepseek-ocr && python tests/evaluation_set_generator.py`
   Expected: JSON file generated at `tests/test_dataset.json` containing the questions.
 
 - [ ] **Step 4: Clean up test files and commit**
@@ -331,7 +331,7 @@
   ```
 
 - [ ] **Step 3: Run dual-RAG retrieval**
-  Run: `cmd /c ""D:\program files\Miniconda\Scripts\activate.bat"" && conda activate translator_env && python tests/run_retrieval.py`
+  Run: `cmd /c ""D:\program files\Miniconda\Scripts\activate.bat"" && conda activate deepseek-ocr && python tests/run_retrieval.py`
   Expected: Prints RAG logs, performs context retrieval, outputs `tests/retrieval_results.json`.
 
 - [ ] **Step 4: Clean up test files and commit**

@@ -12,14 +12,17 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
-
-DOC_CHINESE = "E:/desktop/code/New folder/paper song.docx"
-DOC_ENGLISH = "E:/project/DeepSeek-OCR/ocr_results/44221625_LI LEI/44221625_LI LEI_merged.docx"
+# 使用环境变量并提供默认路径
+DOC_CHINESE = os.getenv("DOC_CHINESE", "E:/desktop/code/New folder/paper song.docx")
+DOC_ENGLISH = os.getenv("DOC_ENGLISH", "E:/project/DeepSeek-OCR/ocr_results/44221625_LI LEI/44221625_LI LEI_merged.docx")
 OUTPUT_PATH = "tests/test_dataset.json"
 LLM_API_URL = "http://localhost:8080/v1/chat/completions"
 MODEL_NAME = "qwen3.6-35b-a3b-distilled-think"
 
 def get_semantic_paragraph_chunks(doc_path, target_length=1000):
+    if not os.path.exists(doc_path):
+        raise FileNotFoundError(f"未找到文档文件: '{doc_path}'，请确认路径是否正确。")
+        
     doc = Document(doc_path)
     chunks = []
     current_chunk = []
@@ -40,21 +43,24 @@ def get_semantic_paragraph_chunks(doc_path, target_length=1000):
 
 def extract_json(text: str):
     """
-    Safely extract and parse JSON object from LLM output.
-    Supports stripping <think> tags and markdown code blocks.
+    安全提取并解析 LLM 输出中的 JSON 对象。
+    健壮地支持过滤 <think> 标签（包括未闭合的思考块）和 markdown 代码块。
     """
-    # Strip <think>...</think> tags and content
-    text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
+    # 健壮过滤 <think>...</think>，支持由于截断未闭合的 think 块
+    text = re.sub(r'<think>[\s\S]*?(?:</think>|$)', '', text).strip()
     
-    # Try to match ```json ... ``` or ``` ... ```
+    # 尝试匹配 ```json ... ``` 或 ``` ... ``` 块
     match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
     if match:
         text = match.group(1).strip()
         
-    # Extract the longest possible JSON object starting with { and ending with }
+    # 提取以 { 开始并以 } 结束的最长 JSON 子串
     match_braces = re.search(r'(\{[\s\S]*\})', text)
     if match_braces:
         text = match_braces.group(1).strip()
+        
+    # 清洗 LLM 输出中常见的尾随逗号错误，避免 json.loads 报错
+    text = re.sub(r',\s*([\]}])', r'\1', text)
         
     return json.loads(text)
 
@@ -90,35 +96,46 @@ def generate_qa_pair(chunk, idx):
         try:
             print(f"  正在请求 API (尝试 {attempt}/3)...")
             resp = requests.post(LLM_API_URL, json=payload, timeout=60)
-            if resp.status_code == 200:
-                content = resp.json()['choices'][0]['message']['content'].strip()
-                try:
-                    qa = extract_json(content)
-                    if "question" in qa and "ground_truth" in qa:
-                        return {
-                            "id": idx,
-                            "source_context": chunk,
-                            "question": qa["question"],
-                            "ground_truth": qa["ground_truth"]
-                        }
-                    else:
-                        print(f"  ⚠️ Attempt {attempt} JSON missing keys: {qa}")
-                except Exception as e:
-                    print(f"  ⚠️ Attempt {attempt} JSON parse failed: {e}. Raw content: {content[:200]}...")
-            else:
-                print(f"  ⚠️ Attempt {attempt} failed with HTTP status: {resp.status_code}")
-        except Exception as e:
-            print(f"  ⚠️ Attempt {attempt} exception: {e}")
+            resp.raise_for_status()  # 触发 HTTP 错误状态码捕获
+            
+            try:
+                response_data = resp.json()
+                content = response_data['choices'][0]['message']['content'].strip()
+            except (ValueError, KeyError, IndexError) as err:
+                print(f"  ⚠️ 尝试 {attempt} 接口响应数据结构解析失败: {err}")
+                continue
+                
+            try:
+                qa = extract_json(content)
+                if "question" in qa and "ground_truth" in qa:
+                    return {
+                        "id": idx,
+                        "source_context": chunk,
+                        "question": qa["question"],
+                        "ground_truth": qa["ground_truth"]
+                    }
+                else:
+                    print(f"  ⚠️ 尝试 {attempt} JSON 缺少必要的键: {qa}")
+            except Exception as e:
+                print(f"  ⚠️ 尝试 {attempt} JSON 解析或过滤失败: {e}. 原始内容摘要: {content[:200]}...")
+                
+        except requests.exceptions.RequestException as req_err:
+            print(f"  ⚠️ 尝试 {attempt} 网络或 API 请求错误: {req_err}")
+            
     return None
 
 def main():
-    print("📂 Loading Chinese document...")
-    chunks_cn = get_semantic_paragraph_chunks(DOC_CHINESE)
-    print(f"📄 Generated {len(chunks_cn)} chunks from Chinese paper.")
-    
-    print("📂 Loading English document...")
-    chunks_en = get_semantic_paragraph_chunks(DOC_ENGLISH)
-    print(f"📄 Generated {len(chunks_en)} chunks from English paper.")
+    try:
+        print("📂 Loading Chinese document...")
+        chunks_cn = get_semantic_paragraph_chunks(DOC_CHINESE)
+        print(f"📄 Generated {len(chunks_cn)} chunks from Chinese paper.")
+        
+        print("📂 Loading English document...")
+        chunks_en = get_semantic_paragraph_chunks(DOC_ENGLISH)
+        print(f"📄 Generated {len(chunks_en)} chunks from English paper.")
+    except FileNotFoundError as err:
+        print(f"❌ 运行中断: {err}")
+        sys.exit(1)
     
     # Set seed for reproducible sampling
     random.seed(42)
