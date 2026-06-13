@@ -16,7 +16,9 @@ def run_script(script_path):
     abs_script_path = os.path.join(PROJECT_ROOT, script_path)
     try:
         # Use sys.executable to ensure we run in the same virtual environment
-        result = subprocess.run([sys.executable, abs_script_path], cwd=PROJECT_ROOT)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = PROJECT_ROOT
+        result = subprocess.run([sys.executable, abs_script_path], cwd=PROJECT_ROOT, env=env)
         if result.returncode == 0:
             print(f"\n>>> {script_path} finished successfully.")
             return True
