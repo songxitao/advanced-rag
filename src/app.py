@@ -58,8 +58,11 @@ def startup_event():
         )
         print("全局生产 RAG 编排服务初始化成功！")
 
-@app.post("/retrieve", response_model=QueryResponse)
-def retrieve(request: QueryRequest):
+from fastapi import Request
+from fastapi.responses import Response
+
+@app.post("/retrieve")
+def retrieve(request: QueryRequest, req: Request):
     """
     进行混合检索与重排精选，返回父块拼接上下文
     """
@@ -68,7 +71,14 @@ def retrieve(request: QueryRequest):
     
     try:
         context = app.state.coordinator.query(request.query)
-        return QueryResponse(context=context)
+        
+        # 检查 Accept 请求头是否倾向于接收纯文本（方便 Dify 直接调用）
+        accept_header = req.headers.get("accept", "")
+        if "text/plain" in accept_header:
+            return Response(content=context, media_type="text/plain; charset=utf-8")
+            
+        # 默认返回 JSON 结构（兼容单元测试与常规 API 调用）
+        return {"context": context}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"检索处理出错: {str(e)}")
 
