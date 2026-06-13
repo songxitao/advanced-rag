@@ -1,0 +1,83 @@
+import os
+import sys
+import subprocess
+
+STAGES = {
+    "1": ("Stage 1: tests/evaluation_set_generator.py", "tests/evaluation_set_generator.py"),
+    "2": ("Stage 2: tests/run_retrieval.py", "tests/run_retrieval.py"),
+    "3": ("Stage 3: tests/generate_answers.py", "tests/generate_answers.py"),
+    "4": ("Stage 4: tests/evaluate_results.py", "tests/evaluate_results.py")
+}
+
+def run_script(script_path):
+    print(f"\n>>> Running {script_path}...")
+    try:
+        # Use sys.executable to ensure we run in the same virtual environment
+        result = subprocess.run([sys.executable, script_path])
+        if result.returncode == 0:
+            print(f"\n>>> {script_path} finished successfully.")
+            return True
+        else:
+            print(f"\n>>> Error: {script_path} failed with exit code {result.returncode}.")
+            return False
+    except Exception as e:
+        print(f"\n>>> Unexpected error running {script_path}: {e}")
+        return False
+
+def run_stage(key):
+    if key not in STAGES:
+        return False
+    name, path = STAGES[key]
+    if not os.path.exists(path):
+        print(f"\n>>> Error: Script not found at {path}")
+        return False
+    return run_script(path)
+
+def show_menu():
+    print("\n" + "="*50)
+    print("      RAG Evaluation Pipeline Control Manager")
+    print("="*50)
+    for key, (name, _) in STAGES.items():
+        print(f" [{key}] {name}")
+    print(" [A] Run all stages in sequence")
+    print(" [Q] Quit")
+    print("="*50)
+
+def main():
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
+    while True:
+        show_menu()
+        try:
+            choice = input("Enter choice: ").strip().upper()
+        except KeyboardInterrupt:
+            print("\nExiting Pipeline Control Manager. Goodbye!")
+            break
+        except EOFError:
+            print("\nEOF received. Exiting Pipeline Control Manager.")
+            break
+
+        if choice == 'Q':
+            print("Exiting Pipeline Control Manager. Goodbye!")
+            break
+        elif choice == 'A':
+            print("\n>>> Running all stages in sequence...")
+            all_success = True
+            for key in sorted(STAGES.keys()):
+                if not run_stage(key):
+                    print(f"\n>>> Pipeline stopped: Stage {key} failed or missing.")
+                    all_success = False
+                    break
+            if all_success:
+                print("\n>>> All stages executed successfully.")
+        elif choice in STAGES:
+            run_stage(choice)
+        else:
+            print("Invalid choice, please try again.")
+
+if __name__ == "__main__":
+    main()
