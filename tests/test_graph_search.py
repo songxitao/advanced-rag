@@ -1,6 +1,6 @@
 import pytest
 import networkx as nx
-from src.graph_search import run_personalized_pagerank, run_semantic_random_walk, cosine_similarity
+from src.graph_search import run_personalized_pagerank, run_semantic_random_walk, cosine_similarity, GraphPostRetriever
 
 def test_cosine_similarity():
     v1 = [1.0, 0.0]
@@ -82,6 +82,7 @@ def test_coordinator_graph_retrieval_and_cliff(tmp_path):
     reranker = RerankerService(device="cpu")
     
     coordinator = RAGCoordinator(loader, splitter, emb, db, reranker)
+    retriever = GraphPostRetriever(emb, db, reranker)
     
     # 写入同一个文件，用换行符分开，生成物理相邻的三段：
     # 1. 特工A01持有关于绝密计划的核心图纸。 (特工核心)
@@ -106,21 +107,21 @@ def test_coordinator_graph_retrieval_and_cliff(tmp_path):
         print("Meta parent_id:", m.get("parent_id"), "parent_text:", m.get("parent_text"))
     
     # 1. 验证以 heuristic_walk 模式能够把 1跳的“早稻田大学”捞出
-    context_walk = coordinator.query("特工A01的图纸在哪里？", graph_search_mode="heuristic_walk")
+    context_walk = retriever.query_graph_enhanced("特工A01的图纸在哪里？", graph_search_mode="heuristic_walk")
     print("\n--- DEBUG context_walk ---")
     print(context_walk)
     assert "特工A01" in context_walk
     assert "早稻田大学" in context_walk
 
     # 2. 验证以 ppr 模式也能够把“早稻田大学”捞出
-    context_ppr = coordinator.query("特工A01的图纸在哪里？", graph_search_mode="ppr")
+    context_ppr = retriever.query_graph_enhanced("特工A01的图纸在哪里？", graph_search_mode="ppr")
     assert "特工A01" in context_ppr
     assert "早稻田大学" in context_ppr
 
     # 3. 验证断崖截断
     # 物理邻居 2跳为“吃苹果”。我们通过 Mock Reranker 强行降低“吃苹果”的得分至 -2.0，
     # 而将特工/早稻田分值设为 1.0。这样落差为 1.0 - (-2.0) = 3.0 > 1.5，必定触发截断。
-    original_rerank = coordinator.reranker.rerank
+    original_rerank = retriever.reranker.rerank
     def mock_rerank(query, candidates, top_k):
         print("\n--- DEBUG mock_rerank call ---")
         for idx, c in enumerate(candidates):
@@ -136,9 +137,9 @@ def test_coordinator_graph_retrieval_and_cliff(tmp_path):
             print("score:", r["rerank_score"], "content:", r["content"])
         return sorted(results, key=lambda x: x["rerank_score"], reverse=True)
         
-    coordinator.reranker.rerank = mock_rerank
+    retriever.reranker.rerank = mock_rerank
 
-    context_cliff = coordinator.query("特工A01的图纸在哪里？", graph_search_mode="heuristic_walk")
+    context_cliff = retriever.query_graph_enhanced("特工A01的图纸在哪里？", graph_search_mode="heuristic_walk")
     print("\n--- DEBUG context_cliff ---")
     print(context_cliff)
     # 特工A01依然存在
