@@ -66,7 +66,11 @@ def extract_json(text: str):
         
     # Clean trailing commas in objects or lists to prevent JSON decode errors
     text = re.sub(r',\s*([\]}])', r'\1', text)
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"[Generator] JSON decode error: {e}. Returning empty dictionary.")
+        return {}
 
 def cluster_names_with_llm(names):
     """
@@ -172,7 +176,7 @@ def run_disguise_pipeline(input_file, output_dir):
         code = f"[角色_{idx}]"
         for alias in unique_aliases:
             alias = alias.strip()
-            if alias:
+            if alias and len(alias) >= 2:
                 replace_pairs.append((alias, code))
                 
     # Sort pairs by original name length in descending order (longest name first)
