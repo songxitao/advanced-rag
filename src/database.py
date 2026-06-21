@@ -3,6 +3,11 @@ from typing import List, Dict, Any
 import chromadb
 from rank_bm25 import BM25Okapi
 import jieba
+import networkx as nx
+import numpy as np
+import re
+import jieba.posseg as pseg
+from collections import Counter
 
 class VectorStoreAdapter(ABC):
     @abstractmethod
@@ -23,6 +28,8 @@ class ChromaAdapter(VectorStoreAdapter):
         self.bm25 = None
         self.bm25_docs = []  # 备份内存倒排索引所对应的数据列表，每个元素包含 {"document": str, "metadata": dict}
         self._rebuild_bm25()
+        self.graph = nx.Graph()
+        self.rebuild_graph()
 
     def _rebuild_bm25(self) -> None:
         """从已存的 Chroma 中提取文本和元数据，重建 BM25 词频索引"""
@@ -40,8 +47,147 @@ class ChromaAdapter(VectorStoreAdapter):
         else:
             self.bm25 = None
 
+    def rebuild_graph(self) -> None:
+        """从已存的 Chroma 中提取所有 chunks 数据，重建 NetworkX 内存图并建立三轨连边"""
+        self.graph = nx.Graph()
+        count = self.collection.count()
+        if count == 0:
+            return
+
+        # 1. 从 Chroma 中提取所有 chunks 数据（包含 doc, metadata, embeddings）
+        all_data = self.collection.get(include=["documents", "metadatas", "embeddings"])
+        ids = all_data.get("ids", [])
+        metadatas = all_data.get("metadatas", [])
+        embeddings = all_data.get("embeddings", [])
+        n_chunks = len(ids)
+        if n_chunks == 0:
+            return
+
+        # 2. 将独特的 parent_id 及其 parent_text、embedding、source_path、filename 作为节点加入到 self.graph 中
+        parent_nodes_data = {}
+        for i in range(n_chunks):
+            meta = metadatas[i]
+            emb = embeddings[i]
+            pid = meta["parent_id"]
+            if pid not in parent_nodes_data:
+                parent_nodes_data[pid] = {
+                    "parent_text": meta["parent_text"],
+                    "source_path": meta["source_path"],
+                    "filename": meta["filename"],
+                    "char_start": meta.get("char_start", 0),
+                    "embeddings": [emb]
+                }
+            else:
+                parent_nodes_data[pid]["embeddings"].append(emb)
+                if "char_start" in meta:
+                    parent_nodes_data[pid]["char_start"] = min(parent_nodes_data[pid]["char_start"], meta["char_start"])
+
+        # 计算 parent embedding 均值并添加到图中
+        for pid, data in parent_nodes_data.items():
+            mean_emb = np.mean(data["embeddings"], axis=0).tolist()
+            self.graph.add_node(
+                pid,
+                parent_text=data["parent_text"],
+                embedding=mean_emb,
+                source_path=data["source_path"],
+                filename=data["filename"]
+            )
+
+        # 3. 物理相邻边：在同一个文档（相同 source_path）中，按 char_start 排序相邻的前后节点之间建立物理边
+        doc_groups = {}
+        for pid, data in parent_nodes_data.items():
+            sp = data["source_path"]
+            if sp not in doc_groups:
+                doc_groups[sp] = []
+            doc_groups[sp].append((pid, data["char_start"]))
+
+        for sp, nodes in doc_groups.items():
+            sorted_nodes = sorted(nodes, key=lambda x: x[1])
+            for i in range(len(sorted_nodes) - 1):
+                u = sorted_nodes[i][0]
+                v = sorted_nodes[i+1][0]
+                self.graph.add_edge(u, v, type="physical")
+
+        # 4. 无监督 TF-IDF 实体共现边
+        # 4.1 动态注册脱敏代号到分词器中
+        pattern = re.compile(r"(?:角色|代号|项目|特工)\s*[A-Za-z0-9_]+")
+        for pid in self.graph.nodes:
+            text = self.graph.nodes[pid]["parent_text"]
+            for match in pattern.finditer(text):
+                jieba.add_word(match.group(0), tag='n')
+
+        # 4.2 用 jieba.posseg 对父块分词，仅保留名词和英文词性。统计特征词频（提取 Top-5 关键词）
+        keywords = {}
+        for pid in self.graph.nodes:
+            text = self.graph.nodes[pid]["parent_text"]
+            words = []
+            for word, flag in pseg.cut(text):
+                word_stripped = word.strip()
+                if not word_stripped:
+                    continue
+                if flag.startswith('n') or flag == 'eng':
+                    words.append(word_stripped)
+            counter = Counter(words)
+            top_5 = [w for w, _ in counter.most_common(5)]
+            keywords[pid] = top_5
+
+        # 4.3 在同一个文档内部，若两个父块共享至少一个特征词，则建立实体共现边
+        for sp, nodes in doc_groups.items():
+            node_ids = [n[0] for n in nodes]
+            n_nodes = len(node_ids)
+            for i in range(n_nodes):
+                for j in range(i + 1, n_nodes):
+                    u = node_ids[i]
+                    v = node_ids[j]
+                    shared = set(keywords[u]) & set(keywords[v])
+                    if shared:
+                        self.graph.add_edge(u, v, type="entity")
+
+        # 5. 局域与 ANN 语义关联边
+        # 5.1 同一文档内部：用 NumPy 向量两两点积计算余弦相似度，若相似度 >= 0.82，则建立语义关联边
+        for sp, nodes in doc_groups.items():
+            node_ids = [n[0] for n in nodes]
+            n_nodes = len(node_ids)
+            for i in range(n_nodes):
+                u = node_ids[i]
+                vec_u = np.array(self.graph.nodes[u]["embedding"])
+                norm_u = np.linalg.norm(vec_u)
+                if norm_u == 0.0:
+                    continue
+                for j in range(i + 1, n_nodes):
+                    v = node_ids[j]
+                    vec_v = np.array(self.graph.nodes[v]["embedding"])
+                    norm_v = np.linalg.norm(vec_v)
+                    if norm_v == 0.0:
+                        continue
+                    sim = np.dot(vec_u, vec_v) / (norm_u * norm_v)
+                    if sim >= 0.82:
+                        self.graph.add_edge(u, v, type="semantic")
+
+        # 5.2 跨文档：遍历节点，以其 embedding 在 Chroma 中 query 包含其自身在内的 Top-6，
+        # 若邻居相似度 (1.0 - distance) >= 0.85 且属于跨文档，则连边
+        for u in self.graph.nodes:
+            emb_u = self.graph.nodes[u]["embedding"]
+            src_u = self.graph.nodes[u]["source_path"]
+            
+            results = self.collection.query(
+                query_embeddings=[emb_u],
+                n_results=min(6, count),
+                include=["metadatas", "distances"]
+            )
+            
+            if results["metadatas"] and results["metadatas"][0]:
+                for idx, meta in enumerate(results["metadatas"][0]):
+                    dist = results["distances"][0][idx]
+                    sim = 1.0 - dist
+                    if sim >= 0.85:
+                        v = meta["parent_id"]
+                        src_v = meta["source_path"]
+                        if src_u != src_v and v in self.graph:
+                            self.graph.add_edge(u, v, type="semantic")
+
     def add_chunks(self, chunks_data: List[Dict[str, Any]], dense_embeddings: List[List[float]]) -> None:
-        """在 Chroma 里存储 child_text 作为 document，并同步重建 BM25"""
+        """在 Chroma 里存储 child_text 作为 document，并同步重建 BM25 与 NetworkX 内存图"""
         # 生成唯一 ID，可以用 parent_id 拼上索引，确保在一批 add_chunks 里 ID 不冲突
         ids = [f"{c['parent_id']}_{i}" for i, c in enumerate(chunks_data)]
         documents = [c["child_text"] for c in chunks_data]
@@ -63,6 +209,7 @@ class ChromaAdapter(VectorStoreAdapter):
             metadatas=metadatas
         )
         self._rebuild_bm25()
+        self.rebuild_graph()
 
     def hybrid_search(self, dense_vec: List[float], sparse_vec: Dict[str, float], top_k: int) -> List[Dict[str, Any]]:
         """双通道混合检索与去重 (使用 ThreadPoolExecutor 并行化检索)"""
