@@ -1,0 +1,22 @@
+{
+  "Naive RAG": {
+    "Faithfulness": 0.36,
+    "Answer Relevance": 0.375,
+    "Accuracy": 0.08
+  },
+  "Traditional RAG": {
+    "Faithfulness": 0.82,
+    "Answer Relevance": 0.785,
+    "Accuracy": 0.64
+  },
+  "PPR Graph RAG": {
+    "Faithfulness": 0.89,
+    "Answer Relevance": 0.79,
+    "Accuracy": 0.495
+  },
+  "Heuristic Walk Graph RAG": {
+    "Faithfulness": 0.6,
+    "Answer Relevance": 0.605,
+    "Accuracy": 0.32
+  }
+}
