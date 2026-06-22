@@ -61,13 +61,29 @@ def extract_json(text: str):
     match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
     if match:
         text = match.group(1).strip()
+    
+    # 优先匹配并提取 JSON 数组 [ ... ] 结构
+    match_bracket = re.search(r'(\[[\s\S]*\])', text)
+    if match_bracket:
+        try:
+            cleaned = re.sub(r',\s*([\]}])', r'\1', match_bracket.group(1).strip())
+            return json.loads(cleaned)
+        except Exception:
+            pass
+
+    # 其次匹配并提取 JSON 字典 { ... } 结构
     match_braces = re.search(r'(\{[\s\S]*\})', text)
     if match_braces:
-        text = match_braces.group(1).strip()
+        try:
+            cleaned = re.sub(r',\s*([\]}])', r'\1', match_braces.group(1).strip())
+            return json.loads(cleaned)
+        except Exception:
+            pass
+
     text = re.sub(r',\s*([\]}])', r'\1', text)
     return json.loads(text)
 
-def generate_graph_based_qa(node_a_text, node_b_text, idx):
+def generate_graph_based_qa(node_a_text, node_b_text, start_idx):
     prompt = f"""你是一个极其优秀的、专门用于测试 RAG 检索器图拓扑扩散能力的学术评测出题官。
 以下是两段从完全脱敏的三国小说中抽取的文本片段（在物理上它们并不相邻，但逻辑上它们通过某个角色或地点相互关联）：
 
@@ -77,7 +93,7 @@ def generate_graph_based_qa(node_a_text, node_b_text, idx):
 【片段 B】（包含逻辑链条终点和答案）：
 {node_b_text}
 
-请结合这两个断裂片段中的事实，设计一个必须同时参考这两个片段才能正确回答的【跨章节多跳隐式推理问题】，并给出标准答案。
+请结合这两个断裂片段中的事实，设计 2 道必须同时参考这两个片段才能正确回答的【跨章节多跳隐式推理问题】，并给出标准答案。这 2 道题应该从不同的逻辑角度或细节发问。
 
 【设计准则】：
 1. 答案（ground_truth）必须且只能是片段 B 中出现的某个伪装代号，形如 `[角色_X]` 或 `[地点_Y]`。绝对不能是任何历史上真实的中文人名（如“刘备”、“曹操”等）或地名！
@@ -88,11 +104,17 @@ def generate_graph_based_qa(node_a_text, node_b_text, idx):
 6. 问题本身也严禁使用任何著名的历史事件专有名词（如“赤壁之战”、“桃园结义”、“凤仪亭”、“连环计”、“白帝城”等）。
 7. 问题的设计机制：问题提及的实体和起因在【片段 A】，但提问指向的终点人物/地点，其代号必须位于【片段 B】。只检索到片段 A 或片段 B 之一是无法得出此答案的。
 
-请严格按照以下 JSON 格式输出，不要包含任何多余解释、Markdown 代码标记或思考过程：
-{{
-  "question": "隐式多跳推理问题（不得出现任何代号，也不得出现任何真实历史人名/地名/典故名称/具体情节词汇）",
-  "ground_truth": "标准答案（必须是类似于 `[角色_X]` 或 `[地点_Y]` 的规范代号，不能包含其他字）"
-}}"""
+请严格按照以下 JSON 格式输出包含 2 个问题字典的数组，不要包含任何多余解释、Markdown 代码标记或思考过程：
+[
+  {{
+    "question": "第 1 个隐式多跳推理问题（不得出现任何代号，也不得出现任何真实历史人名/地名/典故名称/具体情节词汇）",
+    "ground_truth": "标准答案（必须是类似于 `[角色_X]` 或 `[地点_Y]` 的规范代号，不能包含其他字）"
+  }},
+  {{
+    "question": "第 2 个隐式多跳推理问题（与第 1 个角度不同，不得出现任何代号，也不得出现任何真实历史人名/地名/典故名称/具体情节词汇）",
+    "ground_truth": "标准答案（必须是类似于 `[角色_X]` 或 `[地点_Y]` 的规范代号，不能包含其他字）"
+  }}
+]"""
 
     payload = {
         "model": MODEL_NAME,
@@ -118,17 +140,33 @@ def generate_graph_based_qa(node_a_text, node_b_text, idx):
                 continue
                 
             try:
-                qa = extract_json(content)
-                if "question" in qa and "ground_truth" in qa:
-                    return {
-                        "id": idx,
-                        "node_a_context": node_a_text,
-                        "node_b_context": node_b_text,
-                        "question": qa["question"],
-                        "ground_truth": qa["ground_truth"].strip()
-                    }
+                raw_data = extract_json(content)
+                qa_list = []
+                if isinstance(raw_data, list):
+                    qa_list = raw_data
+                elif isinstance(raw_data, dict):
+                    if "questions" in raw_data:
+                        qa_list = raw_data["questions"]
+                    elif "items" in raw_data:
+                        qa_list = raw_data["items"]
+                    else:
+                        qa_list = [raw_data]
+                
+                if isinstance(qa_list, list) and len(qa_list) > 0:
+                    valid_pairs = []
+                    for i, qa in enumerate(qa_list):
+                        if "question" in qa and "ground_truth" in qa:
+                            valid_pairs.append({
+                                "id": start_idx + i,
+                                "node_a_context": node_a_text,
+                                "node_b_context": node_b_text,
+                                "question": qa["question"],
+                                "ground_truth": qa["ground_truth"].strip()
+                            })
+                    if len(valid_pairs) > 0:
+                        return valid_pairs
                 else:
-                    print(f"  ⚠️ 尝试 {attempt} JSON 缺少必要的键: {qa}")
+                    print(f"  ⚠️ 尝试 {attempt} JSON 缺少/无法提取必要的键，原始解析为: {raw_data}")
             except Exception as e:
                 print(f"  ⚠️ 尝试 {attempt} JSON 解析或过滤失败: {e}. 原始内容摘要: {content[:200]}...")
                 
@@ -143,78 +181,135 @@ def main():
         print(f"❌ 未找到换皮小说文件: {disguised_path}。请先生成它。")
         sys.exit(1)
 
-    print("Step 1: Parsing text and extracting semantic relation chunks (Zero CPU overhead)...")
-    chunks = get_semantic_paragraph_chunks(disguised_path, target_length=800)
-    print(f"Generated {len(chunks)} chunks from disguised book.")
-    
-    # 提取每个 chunk 里的代号集合，用于判定实体共现
-    code_pattern = re.compile(r'\[(?:角色|地点)_\d+\]')
-    chunk_entities = []
-    for idx, c in enumerate(chunks):
-        entities = set(code_pattern.findall(c))
-        chunk_entities.append((idx, c, entities))
-        
-    # Step 2: 匹配“物理断裂（索引差大于2）但实体共现（至少共享一个代号）”的对
-    relation_pairs = []
-    n = len(chunk_entities)
-    for i in range(n):
-        idx_i, text_i, ents_i = chunk_entities[i]
-        if not ents_i:
-            continue
-        for j in range(i + 3, n): # 保证跨度大于 2 个物理块
-            idx_j, text_j, ents_j = chunk_entities[j]
-            # 找交集实体
-            common = ents_i & ents_j
-            if common:
-                # 我们找到了一个物理断裂但逻辑共现的对
-                relation_pairs.append((text_i, text_j, common))
-                
-    print(f"Found {len(relation_pairs)} non-adjacent entity-co-occurrence chunk pairs.")
-    if not relation_pairs:
-        print("⚠️ 没找到物理断裂实体共现对，退而求其次使用所有不相邻块对。")
-        for i in range(n):
-            for j in range(i + 3, n):
-                relation_pairs.append((chunks[i], chunks[j], set()))
+    print("Step 1: Initializing RAG components and building NetworkX graph...")
+    from src.loader import DocumentLoader
+    from src.splitter import SemanticParentChildSplitter
+    from src.embedding import LocalEmbeddingService
+    from src.database import ChromaAdapter
+    from src.coordinator import RAGCoordinator
+    from src.graph_search import run_personalized_pagerank
+    import networkx as nx
+    import torch
 
-    # 随机打乱以增加采样随机度
-    random.seed(42)
-    random.shuffle(relation_pairs)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    db_dir = "E:/project/advanced-rag/vector_db"
     
+    embedding_service = LocalEmbeddingService(device=device)
+    splitter = SemanticParentChildSplitter(embedding_service=embedding_service, threshold=None, child_size=150)
+    db_adapter = ChromaAdapter(db_dir=db_dir)
+
+    # 干净的重置，以便出题前重建最新的图谱
+    try:
+        db_adapter.client.delete_collection(db_adapter.collection.name)
+    except Exception:
+        pass
+    db_adapter.collection = db_adapter.client.get_or_create_collection(
+        name=db_adapter.collection.name,
+        metadata={"hnsw:space": "cosine"}
+    )
+    db_adapter.bm25 = None
+    db_adapter.bm25_docs = []
+    db_adapter.graph = nx.Graph()
+
+    loader = DocumentLoader()
+    coordinator = RAGCoordinator(
+        loader=loader,
+        splitter=splitter,
+        embedding_service=embedding_service,
+        db_adapter=db_adapter,
+        reranker=None
+    )
+
+    print("Adding disguised book to build NetworkX graph...")
+    coordinator.add_file(disguised_path)
+    
+    graph = db_adapter.graph
+    print(f"Graph nodes: {len(graph.nodes)}, Graph edges: {len(graph.edges)}")
+
+    # 提取物理子图
+    physical_graph = nx.Graph()
+    physical_graph.add_nodes_from(graph.nodes)
+    for u, v, d in graph.edges(data=True):
+        if d.get("type") == "physical":
+            physical_graph.add_edge(u, v)
+
+    # 匹配“物理断裂且有强拓扑关联的黄金节点对”
+    relation_pairs = []
+    nodes = list(graph.nodes)
+    print("Searching for gold topology-related but physically distant node pairs...")
+    min_dist = 5
+    while len(relation_pairs) < 30 and min_dist >= 2:
+        relation_pairs = []
+        for v_A in nodes:
+            # 在全图上运行 PPR 捞出高关联节点
+            ppr_results = run_personalized_pagerank(graph, seed_node_id=v_A, top_k=20)
+            for v_B, ppr_score in ppr_results:
+                if v_A == v_B:
+                    continue
+                # 必须在物理图上连通
+                if nx.has_path(physical_graph, v_A, v_B):
+                    dist = nx.shortest_path_length(physical_graph, source=v_A, target=v_B)
+                    if dist >= min_dist:
+                        # 捞出对应文本
+                        text_A = graph.nodes[v_A].get("parent_text", "")
+                        text_B = graph.nodes[v_B].get("parent_text", "")
+                        if text_A and text_B:
+                            relation_pairs.append((text_A, text_B, ppr_score))
+        if len(relation_pairs) < 30:
+            min_dist -= 1
+            print(f"Qualifying pairs too few. Reducing min_dist to {min_dist}...")
+
+    # 按 PPR 得分降序排序
+    relation_pairs.sort(key=lambda x: x[2], reverse=True)
+    print(f"Found {len(relation_pairs)} qualifying gold topology pairs with min_dist={min_dist}.")
+    
+    if not relation_pairs:
+        print("⚠️ 未找到任何符合条件的黄金物理断裂对，降级使用全图邻居节点...")
+        for u, v, d in graph.edges(data=True):
+            text_u = graph.nodes[u].get("parent_text", "")
+            text_v = graph.nodes[v].get("parent_text", "")
+            if text_u and text_v:
+                relation_pairs.append((text_u, text_v, 1.0))
+
     dataset = []
     idx = 1
     
     # 遍历这些连边对应的节点对，让大模型跨这两个断裂文本块出题
-    for node_a_text, node_b_text, common_entities in relation_pairs:
+    for node_a_text, node_b_text, _score in relation_pairs:
         if len(dataset) >= 10:
             break
             
-        print(f"🤖 Generating Graph-based Q&A [{len(dataset)+1}/10] on entity common {common_entities}...")
-        qa_pair = generate_graph_based_qa(node_a_text, node_b_text, idx)
-        if qa_pair:
-            q_text = qa_pair.get("question", "")
-            gt_text = qa_pair.get("ground_truth", "")
-            
-            # 严格过滤
-            if "[角色_" in q_text or "角色_" in q_text or "[地点_" in q_text or "地点_" in q_text:
-                print("  ⚠️ 提问本身泄露了代号，废弃。")
-                continue
-                
-            has_blacklist = False
-            for black_word in BLACKLIST_ENTITIES:
-                if black_word in q_text or black_word in gt_text:
-                    print(f"  ⚠️ 问题或答案中包含黑名单词汇 '{black_word}'，废弃。")
-                    has_blacklist = True
+        print(f"🤖 Generating Graph-based Q&A (Current dataset size: {len(dataset)}/10)...")
+        qa_pairs = generate_graph_based_qa(node_a_text, node_b_text, idx)
+        if qa_pairs:
+            for qa_pair in qa_pairs:
+                if len(dataset) >= 10:
                     break
-            if has_blacklist:
-                continue
+                q_text = qa_pair.get("question", "")
+                gt_text = qa_pair.get("ground_truth", "")
                 
-            if not re.match(r'^\[(角色|地点)_\d+\]$', gt_text):
-                print(f"  ⚠️ 答案格式不合规 (必须仅为 [角色_X] 或 [地点_Y]): '{gt_text}'，废弃。")
-                continue
-                
-            dataset.append(qa_pair)
-            print(f"  ✅ Generated successfully! Q: {q_text[:40]}... A: {gt_text}")
-            idx += 1
+                # 严格过滤
+                if "[角色_" in q_text or "角色_" in q_text or "[地点_" in q_text or "地点_" in q_text:
+                    print("  ⚠️ 提问本身泄露了代号，废弃。")
+                    continue
+                    
+                has_blacklist = False
+                for black_word in BLACKLIST_ENTITIES:
+                    if black_word in q_text or black_word in gt_text:
+                        print(f"  ⚠️ 问题或答案中包含黑名单词汇 '{black_word}'，废弃。")
+                        has_blacklist = True
+                        break
+                if has_blacklist:
+                    continue
+                    
+                if not re.match(r'^\[(角色|地点)_\d+\]$', gt_text):
+                    print(f"  ⚠️ 答案格式不合规 (必须仅为 [角色_X] 或 [地点_Y]): '{gt_text}'，废弃。")
+                    continue
+                    
+                qa_pair["id"] = idx
+                dataset.append(qa_pair)
+                print(f"  ✅ Generated successfully! Q: {q_text[:40]}... A: {gt_text}")
+                idx += 1
             
     # 保存结果
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)

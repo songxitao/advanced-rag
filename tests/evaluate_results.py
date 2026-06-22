@@ -14,7 +14,7 @@ if hasattr(sys.stderr, 'reconfigure'):
 INPUT_PATH = "tests/answer_results.json"
 RADAR_OUTPUT_PATH = "tests/evaluation_radar.png"
 LLM_API_URL = "http://localhost:8080/v1/chat/completions"
-MODEL_NAME = "qwen3.6-35b-a3b-nothink"
+MODEL_NAME = "qwen3.6-35b-a3b-opus-nothink"
 
 # 确保输出目录存在
 os.makedirs("tests/outputs", exist_ok=True)
