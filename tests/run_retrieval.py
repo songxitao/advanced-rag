@@ -1,7 +1,9 @@
 import sys
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import json
 import torch
+
 
 # 配置 sys.stdout/stderr 以在 Windows 下输出 utf-8，防止 Unicode 编码报错
 if sys.platform.startswith('win'):
@@ -33,6 +35,8 @@ from rag_engine import RAGEngine, RAGConfig
 DOC_CHINESE = "E:/desktop/code/New folder/paper song.docx"
 DOC_ENGLISH = "E:/project/DeepSeek-OCR/ocr_results/44221625_LI LEI/44221625_LI LEI_merged.docx"
 
+import re
+
 def align_naive_rag(engine):
     print("Checking / Aligning documents in Naive RAG...")
     for path in [DOC_CHINESE, DOC_ENGLISH]:
@@ -55,16 +59,41 @@ def align_advanced_rag(coordinator):
             print(f"Advanced RAG: Document '{filename}' not found. Adding file...")
             coordinator.add_file(path)
 
-def main():
-    # 检测运行设备
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Detected and using device for models: {device}")
+def align_sanguo_dataset(naive_engine, coordinator):
+    print("Cleaning existing database and aligning with disguised Sanguo Dataset...")
     
-    # 实例化 Naive RAG Engine
-    naive_config = RAGConfig()
-    naive_config.EMBEDDING_DEVICE = device
-    naive_config.RERANKER_DEVICE = device
-    naive_engine = RAGEngine(naive_config)
+    # 1. 彻底清空 Naive RAG
+    naive_engine.clear_db()
+    
+    # 2. 彻底清空 Advanced RAG Chroma 与 NetworkX 内存图
+    try:
+        coordinator.db_adapter.client.delete_collection(coordinator.db_adapter.collection.name)
+    except Exception as e:
+        print(f"Warning deleting collection: {e}")
+    coordinator.db_adapter.collection = coordinator.db_adapter.client.get_or_create_collection(
+        name=coordinator.db_adapter.collection.name,
+        metadata={"hnsw:space": "cosine"}
+    )
+    import networkx as nx
+    coordinator.db_adapter.bm25 = None
+    coordinator.db_adapter.bm25_docs = []
+    coordinator.db_adapter.graph = nx.Graph()
+    
+    # 3. 仅且只导入全量伪装好的新书
+    disguised_path = "tests/temp_data/三国演义白话文_disguised.txt"
+    if os.path.exists(disguised_path):
+        filename = os.path.basename(disguised_path)
+        print(f"Adding disguised book '{filename}' to Advanced RAG...")
+        coordinator.add_file(disguised_path)
+        print(f"Adding disguised book '{filename}' to Naive RAG...")
+        naive_engine.add_file(disguised_path)
+    else:
+        raise FileNotFoundError(f"未找到全量伪装文本: {disguised_path}")
+
+def main():
+    # 开启 CUDA 运行并释放线程锁
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device for RAG models: {device}")
     
     # 导入新版 RAG 模块并实例化 RAGCoordinator
     from src.loader import DocumentLoader
@@ -73,13 +102,43 @@ def main():
     from src.database import ChromaAdapter
     from src.reranker import RerankerService
     from src.coordinator import RAGCoordinator
+    from src.graph_search import GraphPostRetriever
+
+    # 1. 先实例化高级 RAG 相关的 embedding 和 reranker 服务（模型共享源头）
+    embedding_service = LocalEmbeddingService(device=device)
+    reranker_service = RerankerService(device=device)
+
+    # 2. 注入 Mock 方法，防止 RAGEngine 实例化时重复加载模型产生死锁
+    original_init_emb = RAGEngine._init_embedding_model
+    original_init_rerank = RAGEngine._init_reranker_model
+    
+    def mock_init_emb(self):
+        print("🔄 Sharing embedding model instance with Advanced RAG...")
+        self.embedding_model = embedding_service.model
+        print("✅ Shared Embedding 就绪")
+        
+    def mock_init_rerank(self):
+        print("🔄 Sharing reranker model instance with Advanced RAG...")
+        self.reranker_model = reranker_service.model
+        print("✅ Shared Reranker 就绪")
+        
+    RAGEngine._init_embedding_model = mock_init_emb
+    RAGEngine._init_reranker_model = mock_init_rerank
+
+    # 3. 实例化 Naive RAG Engine（此时将秒级安全加载）
+    naive_config = RAGConfig()
+    naive_config.EMBEDDING_DEVICE = device
+    naive_config.RERANKER_DEVICE = device
+    naive_engine = RAGEngine(naive_config)
+    
+    # 恢复原函数，避免污染
+    RAGEngine._init_embedding_model = original_init_emb
+    RAGEngine._init_reranker_model = original_init_rerank
 
     db_dir = "E:/project/advanced-rag/vector_db"
     loader = DocumentLoader()
-    embedding_service = LocalEmbeddingService(device=device)
     splitter = SemanticParentChildSplitter(embedding_service=embedding_service, threshold=None, child_size=150)
     db_adapter = ChromaAdapter(db_dir=db_dir)
-    reranker_service = RerankerService(device=device)
 
     coordinator = RAGCoordinator(
         loader=loader,
@@ -89,39 +148,58 @@ def main():
         reranker=reranker_service
     )
 
-    # 对齐数据（索引缺失文档）
-    align_naive_rag(naive_engine)
-    align_advanced_rag(coordinator)
+    # 注入“大海背景噪声”和“伪装情节文本”
+    align_sanguo_dataset(naive_engine, coordinator)
+
+    # 实例化图检索器
+    retriever = GraphPostRetriever(
+        embedding_service=embedding_service,
+        db_adapter=db_adapter,
+        reranker=reranker_service
+    )
 
     # 读取测试数据集
-    dataset_path = "E:/project/advanced-rag/tests/test_dataset.json"
+    dataset_path = "E:/project/advanced-rag/tests/temp_data/test_sanguo_dataset.json"
+    if not os.path.exists(dataset_path):
+        print(f"❌ 数据集文件不存在: {dataset_path}。请先生成数据集。")
+        sys.exit(1)
+        
     with open(dataset_path, "r", encoding="utf-8") as f:
         questions_data = json.load(f)
 
     print(f"Loaded {len(questions_data)} questions from dataset.")
 
     results = []
-    # 遍历每个问题，执行检索
+    # 遍历每个问题，执行多轨检索
     for i, item in enumerate(questions_data):
         question = item["question"]
         ground_truth = item["ground_truth"]
         print(f"[{i+1}/{len(questions_data)}] Querying for: {question}")
         
-        # Naive RAG 检索 (top_k=5)
+        # 1. Naive RAG 检索 (top_k=5)
         naive_context = naive_engine.search_with_context(question, top_k=5)
         
-        # Advanced RAG 检索 (通过 coordinator.query 检索并返回 top 5 的拼接上下文)
-        advanced_context = coordinator.query(question)
+        # 2. 传统 Advanced RAG 检索 (none 模式)
+        traditional_context = retriever.query_graph_enhanced(question, "none")
+        
+        # 3. PPR 图 RAG 检索 (ppr 模式)
+        ppr_context = retriever.query_graph_enhanced(question, "ppr")
+        
+        # 4. 语义游走图 RAG 检索 (heuristic_walk 模式)
+        walk_context = retriever.query_graph_enhanced(question, "heuristic_walk")
         
         results.append({
             "question": question,
             "ground_truth": ground_truth,
             "naive_context": naive_context,
-            "advanced_context": advanced_context
+            "traditional_context": traditional_context,
+            "ppr_context": ppr_context,
+            "walk_context": walk_context
         })
 
-    # 保存结果到 tests/retrieval_results.json
-    output_path = "E:/project/advanced-rag/tests/retrieval_results.json"
+    # 保存结果到 tests/temp_data/retrieval_sanguo_results.json
+    output_path = "E:/project/advanced-rag/tests/temp_data/retrieval_sanguo_results.json"
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
