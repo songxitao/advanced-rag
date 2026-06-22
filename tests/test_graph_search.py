@@ -28,10 +28,12 @@ def test_run_personalized_pagerank():
     # 从 p1 出发进行 PPR
     res = run_personalized_pagerank(g, "p1", top_k=3)
     assert len(res) > 0
+    # 此时返回 list[tuple[str, float]]，提取其 pid
+    pids = [node for node, score in res]
     # 种子节点 p1 必须被排除在外
-    assert "p1" not in res
+    assert "p1" not in pids
     # 距离 p1 较近的 p2 应排在前面
-    assert res[0] == "p2"
+    assert pids[0] == "p2"
 
     # 防御性测试：不存在的节点
     assert run_personalized_pagerank(g, "non_existent", top_k=3) == []
@@ -55,9 +57,11 @@ def test_run_semantic_random_walk():
     # 从 p1 出发，1跳节点有 p2；2跳节点有 p3（排除起点 p1）
     res = run_semantic_random_walk(g, "p1", query_vector, top_k=2)
     assert len(res) > 0
-    assert "p1" not in res
-    assert "p2" in res
-    assert "p3" in res
+    # 此时返回 list[tuple[str, float]]，提取其 pid
+    pids = [node for node, score in res]
+    assert "p1" not in pids
+    assert "p2" in pids
+    assert "p3" in pids
 
     # 防御性测试：不存在的节点
     assert run_semantic_random_walk(g, "non_existent", query_vector, top_k=2) == []
@@ -118,34 +122,100 @@ def test_coordinator_graph_retrieval_and_cliff(tmp_path):
     assert "特工A01" in context_ppr
     assert "早稻田大学" in context_ppr
 
-    # 3. 验证断崖截断
-    # 物理邻居 2跳为“吃苹果”。我们通过 Mock Reranker 强行降低“吃苹果”的得分至 -2.0，
-    # 而将特工/早稻田分值设为 1.0。这样落差为 1.0 - (-2.0) = 3.0 > 1.5，必定触发截断。
-    original_rerank = retriever.reranker.rerank
-    def mock_rerank(query, candidates, top_k):
-        print("\n--- DEBUG mock_rerank call ---")
-        for idx, c in enumerate(candidates):
-            print(f"candidate {idx}: parent_id: {c['metadata']['parent_id']}, parent_text: {c['metadata']['parent_text']}, content: {c['content']}")
-        results = original_rerank(query, candidates, top_k)
-        for r in results:
-            if "苹果" in r["content"] or "苹果" in r.get("metadata", {}).get("parent_text", ""):
-                r["rerank_score"] = -2.0
-            else:
-                r["rerank_score"] = 1.0
-        print("mock_rerank results:")
-        for r in results:
-            print("score:", r["rerank_score"], "content:", r["content"])
-        return sorted(results, key=lambda x: x["rerank_score"], reverse=True)
-        
-    retriever.reranker.rerank = mock_rerank
+def test_asymmetric_quota_and_fuse():
+    # 模拟 EmbeddingService
+    class MockEmbeddingService:
+        def get_dense_embedding(self, query):
+            return [0.1, 0.2]
+        def get_sparse_embedding(self, query):
+            return {}
 
-    context_cliff = retriever.query_graph_enhanced("特工A01的图纸在哪里？", graph_search_mode="heuristic_walk")
-    print("\n--- DEBUG context_cliff ---")
-    print(context_cliff)
-    # 特工A01依然存在
-    assert "特工A01" in context_cliff
-    # 吃苹果段落被断崖截断过滤
-    assert "苹果" not in context_cliff
+    # 模拟 db_adapter
+    class MockDBAdapter:
+        def __init__(self):
+            self.graph = nx.Graph()
+            # 添加节点和节点属性，以便能补齐信息
+            self.graph.add_node("vector_1", parent_text="Vector Context 1", filename="doc1.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("vector_2", parent_text="Vector Context 2", filename="doc1.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("vector_3", parent_text="Vector Context 3", filename="doc1.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("vector_4", parent_text="Vector Context 4", filename="doc1.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("graph_1", parent_text="Graph Context 1", filename="doc1.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("graph_2", parent_text="Graph Context 2", filename="doc1.txt", source_path="", embedding=[0.1, 0.2])
+            
+            # 建图谱邻边，让 seeds node 能游走到图谱节点
+            self.graph.add_edge("vector_1", "graph_1")
+            self.graph.add_edge("vector_1", "graph_2")
+            self.graph.add_edge("vector_1", "vector_2") # 用于去重测试
 
+        def hybrid_search(self, dense_vec, sparse_vec, top_k):
+            # 初筛召回 candidate 列表
+            return [
+                {"metadata": {"parent_id": "vector_1", "filename": "doc1.txt", "parent_text": "Vector Context 1"}, "content": "Vector Context 1"},
+                {"metadata": {"parent_id": "vector_2", "filename": "doc1.txt", "parent_text": "Vector Context 2"}, "content": "Vector Context 2"},
+                {"metadata": {"parent_id": "vector_3", "filename": "doc1.txt", "parent_text": "Vector Context 3"}, "content": "Vector Context 3"},
+                {"metadata": {"parent_id": "vector_4", "filename": "doc1.txt", "parent_text": "Vector Context 4"}, "content": "Vector Context 4"},
+            ]
 
+    # 模拟 RerankerService
+    class MockRerankerService:
+        def __init__(self, score_override=None):
+            self.score_override = score_override
 
+        def rerank(self, query, candidates, top_k):
+            results = []
+            for i, c in enumerate(candidates):
+                score = self.score_override[i] if self.score_override and i < len(self.score_override) else 0.8
+                results.append({
+                    "content": c["content"],
+                    "metadata": c["metadata"],
+                    "rerank_score": score
+                })
+            # 排序
+            return sorted(results, key=lambda x: x["rerank_score"], reverse=True)
+
+    emb = MockEmbeddingService()
+    db = MockDBAdapter()
+
+    # Case 1: 首位得分 < 0.5，触发熔断，只返回 3 个向量块，不进行图游走
+    reranker_fuse = MockRerankerService(score_override=[0.4, 0.3, 0.2, 0.1])
+    retriever_fuse = GraphPostRetriever(emb, db, reranker_fuse)
+    
+    # 熔断时，即使 graph_search_mode="heuristic_walk"，也不应去游走图
+    context_fuse = retriever_fuse.query_graph_enhanced("test query", graph_search_mode="heuristic_walk")
+    # 应当只包含 vector_1, vector_2, vector_3，且不包含任何 graph 节点
+    assert "Vector Context 1" in context_fuse
+    assert "Vector Context 2" in context_fuse
+    assert "Vector Context 3" in context_fuse
+    assert "Vector Context 4" not in context_fuse
+    assert "Graph Context" not in context_fuse
+    # 片段数量应该正好是 3 个
+    assert "[片段1]" in context_fuse
+    assert "[片段2]" in context_fuse
+    assert "[片段3]" in context_fuse
+    assert "[片段4]" not in context_fuse
+
+    # Case 2: 正常情况（第一名分数 >= 0.5），非对称配额（向量 3 + 图谱 2），包含去重和强行拼接
+    # 第一名是 vector_1。
+    # 图检索 ppr 或 walk 应该捞出 vector_2 (已在向量通道前3中), graph_1, graph_2
+    # 去重后剩余 graph_1, graph_2，作为图谱免检通道的 2 个强行拼在向量通道后
+    reranker_normal = MockRerankerService(score_override=[0.9, 0.8, 0.7, 0.6])
+    retriever_normal = GraphPostRetriever(emb, db, reranker_normal)
+    
+    # 我们调用 query_graph_enhanced，在图里 vector_1 的邻居有 vector_2 (相似度/PPR得分), graph_1, graph_2
+    context_normal = retriever_normal.query_graph_enhanced("test query", graph_search_mode="heuristic_walk")
+    
+    # 结果应为 vector_1, vector_2, vector_3 + graph_1, graph_2
+    assert "Vector Context 1" in context_normal
+    assert "Vector Context 2" in context_normal
+    assert "Vector Context 3" in context_normal
+    assert "Graph Context 1" in context_normal
+    assert "Graph Context 2" in context_normal
+    assert "Vector Context 4" not in context_normal
+    
+    # 共 5 个片段
+    assert "[片段1]" in context_normal
+    assert "[片段2]" in context_normal
+    assert "[片段3]" in context_normal
+    assert "[片段4]" in context_normal
+    assert "[片段5]" in context_normal
+    assert "[片段6]" not in context_normal

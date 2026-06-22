@@ -13,13 +13,13 @@ def cosine_similarity(v1: list[float], v2: list[float]) -> float:
         return 0.0
     return float(np.dot(arr1, arr2) / (norm1 * norm2))
 
-def run_personalized_pagerank(graph: nx.Graph, seed_node_id: str, top_k: int = 5) -> list[str]:
+def run_personalized_pagerank(graph: nx.Graph, seed_node_id: str, top_k: int = 5) -> list[tuple[str, float]]:
     """
     以 seed_node_id 设为唯一能量源计算全图 Personalized PageRank 分数。
     :param graph: 内存 NetworkX 图
     :param seed_node_id: 起点（种子）节点 ID
     :param top_k: 捞回的 Top-K 节点数
-    :return: 捞回的父块 parent_id 列表（已过滤掉起点本身）
+    :return: 捞回的父块 parent_id 和分数的元组列表（已过滤掉起点本身）
     """
     if seed_node_id not in graph:
         return []
@@ -37,13 +37,14 @@ def run_personalized_pagerank(graph: nx.Graph, seed_node_id: str, top_k: int = 5
         # 若因图未连通或计算不收敛抛出异常，做防御返回空
         return []
     
-    # 根据分值降序排序，过滤掉 seed_node_id 自身后返回 Top-K 的 parent_id 列表
+    # 根据分值降序排序，过滤掉 seed_node_id 自身后返回 Top-K 的 (parent_id, score) 元组列表
     sorted_nodes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    result = [node for node, score in sorted_nodes if node != seed_node_id]
+    result = [(node, score) for node, score in sorted_nodes if node != seed_node_id]
     
     return result[:top_k]
 
-def run_semantic_random_walk(graph: nx.Graph, seed_node_id: str, query_vector: list[float], top_k: int = 5) -> list[str]:
+
+def run_semantic_random_walk(graph: nx.Graph, seed_node_id: str, query_vector: list[float], top_k: int = 5) -> list[tuple[str, float]]:
     """
     语义引导的 2跳随机游走：
     1. 第 1 跳：获取 Seed Node 的直接邻居，计算与 Query 的相似度，取 Top-3 个 1 跳节点。
@@ -53,7 +54,7 @@ def run_semantic_random_walk(graph: nx.Graph, seed_node_id: str, query_vector: l
     :param seed_node_id: 起点（种子）节点 ID
     :param query_vector: Query Dense 向量
     :param top_k: 返回的 Top-K 节点数
-    :return: 融合去重后按与 Query 的相似度降序排列的 parent_id 列表
+    :return: 融合去重后按与 Query 的相似度降序排列的 (parent_id, similarity) 元组列表
     """
     if seed_node_id not in graph:
         return []
@@ -104,7 +105,7 @@ def run_semantic_random_walk(graph: nx.Graph, seed_node_id: str, query_vector: l
         final_list.append((node, sim))
         
     final_list.sort(key=lambda x: x[1], reverse=True)
-    return [node for node, _ in final_list[:top_k]]
+    return final_list[:top_k]
 
 
 class GraphPostRetriever:
@@ -121,7 +122,7 @@ class GraphPostRetriever:
 
     def query_graph_enhanced(self, user_question: str, graph_search_mode: str = "heuristic_walk") -> str:
         """
-        双通道混合检索 -> 一次重排锁定 Seed Node -> 图检索拓扑扩展 -> 二路融合 -> 二次重排与断崖截断 -> 格式化输出
+        非对称 3+2 通道配额、免检图谱及 0.5 熔断门控。
         :param user_question: 用户提问
         :param graph_search_mode: 图检索模式，可选 "heuristic_walk"、"ppr" 或 "none"
         :return: 拼接格式化后的上下文字符串
@@ -135,33 +136,48 @@ class GraphPostRetriever:
         if not candidates:
             return ""
 
-        # 3. 一次重排锁定 Seed Node
-        # 对初筛的全部候选块进行重排，不进行截断限制，以锁定最高得分的父块为 Seed Node
+        # 3. 一阶段 Rerank 对初筛结果进行重排，不限制截断
         first_rerank = self.reranker.rerank(user_question, candidates, top_k=len(candidates))
         if not first_rerank:
             return ""
 
-        seed_candidate = first_rerank[0]
-        seed_node_id = seed_candidate["metadata"].get("parent_id")
-
-        # 4. 图拓扑扩展 (1-2跳扩散)
-        graph_pids = []
-        if seed_node_id:
-            if graph_search_mode == "heuristic_walk":
-                graph_pids = run_semantic_random_walk(self.db_adapter.graph, seed_node_id, dense_vec, top_k=5)
-            elif graph_search_mode == "ppr":
-                graph_pids = run_personalized_pagerank(self.db_adapter.graph, seed_node_id, top_k=5)
-
-        # 5. 双路合流
-        # 以 parent_id 作为去重键，建立初筛映射
-        candidates_dict = {c["metadata"]["parent_id"]: c for c in candidates}
-        
-        for pid in graph_pids:
-            if pid not in candidates_dict:
-                # 若图检索捞回的 parent_id 在初筛中不存在，则自动通过内存图中的节点属性补齐构建 candidate
-                if pid in self.db_adapter.graph:
+        # 4. 判定门控：首位得分低于 0.5 时，触发熔断
+        if first_rerank[0]["rerank_score"] < 0.5:
+            # 熔断处理：只取向量通道重排的前 3 个父块作为最终上下文返回，不再游走图谱
+            selected = first_rerank[:3]
+        else:
+            # 未熔断：
+            # 向量通道名额：取前 3 个作为向量结果
+            vector_results = first_rerank[:3]
+            vector_pids = {c["metadata"].get("parent_id") for c in vector_results}
+            
+            # 第一名（Seed Node）的 parent_id
+            seed_node_id = first_rerank[0]["metadata"].get("parent_id")
+            
+            # 图谱通道评分与截取：以 seed_node_id 为种子节点运行图检索
+            graph_scores = []
+            if seed_node_id:
+                if graph_search_mode == "heuristic_walk":
+                    graph_scores = run_semantic_random_walk(self.db_adapter.graph, seed_node_id, dense_vec, top_k=5)
+                elif graph_search_mode == "ppr":
+                    graph_scores = run_personalized_pagerank(self.db_adapter.graph, seed_node_id, top_k=5)
+            
+            # 过滤去重：剔除已经在 vector_results 中出现过的节点
+            filtered_graph_scores = [item for item in graph_scores if item[0] not in vector_pids]
+            
+            # 排序与截取：按自身打分降序排列，截取前 2 个作为图谱结果
+            filtered_graph_scores.sort(key=lambda x: x[1], reverse=True)
+            top_graph_pids = [pid for pid, score in filtered_graph_scores[:2]]
+            
+            # 补齐图谱节点信息
+            candidates_dict = {c["metadata"]["parent_id"]: c for c in candidates}
+            graph_vector_results = []
+            for pid in top_graph_pids:
+                if pid in candidates_dict:
+                    graph_vector_results.append(candidates_dict[pid])
+                elif pid in self.db_adapter.graph:
                     node_data = self.db_adapter.graph.nodes[pid]
-                    candidates_dict[pid] = {
+                    graph_vector_results.append({
                         "content": node_data.get("parent_text", ""),
                         "metadata": {
                             "parent_id": pid,
@@ -171,27 +187,15 @@ class GraphPostRetriever:
                             "char_start": 0,
                             "char_end": 0
                         }
-                    }
-        
-        combined_candidates = list(candidates_dict.values())
+                    })
+            
+            # 合并：图谱块免除二次 Rerank，直接强行 Append 到 vector_results 后面
+            selected = vector_results + graph_vector_results
 
-        # 6. 二次 Rerank 与断崖截断
-        # 将合流后的所有候选送入 reranker.rerank 深度重排，最多截取前 5 个
-        selected = self.reranker.rerank(user_question, combined_candidates, top_k=5)
         if not selected:
             return ""
 
-        # 在返回前，自动按精排得分降序检查相邻得分落差，若落差大于 1.5，则即时断开截断后续低相关文本
-        if len(selected) > 1:
-            cutoff_idx = len(selected)
-            for i in range(len(selected) - 1):
-                drop = selected[i]["rerank_score"] - selected[i+1]["rerank_score"]
-                if drop > 1.5:
-                    cutoff_idx = i + 1
-                    break
-            selected = selected[:cutoff_idx]
-
-        # 7. 执行父块替换并拼接格式化后的上下文字符串
+        # 5. 执行父块替换并拼接格式化后的上下文字符串
         formatted_parts = []
         for idx, candidate in enumerate(selected, 1):
             filename = candidate["metadata"].get("filename", "未知文件")
