@@ -219,3 +219,150 @@ def test_asymmetric_quota_and_fuse():
     assert "[片段4]" in context_normal
     assert "[片段5]" in context_normal
     assert "[片段6]" not in context_normal
+
+
+def test_asymmetric_quota_cliff_and_reorder():
+    # 模拟 EmbeddingService
+    class MockEmbeddingService:
+        def get_dense_embedding(self, query):
+            return [0.1, 0.2]
+        def get_sparse_embedding(self, query):
+            return {}
+
+    # 模拟 db_adapter
+    class MockDBAdapter:
+        def __init__(self):
+            self.graph = nx.Graph()
+            # 添加节点属性
+            self.graph.add_node("V_1", parent_text="Vector Context 1", filename="doc.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("V_2", parent_text="Vector Context 2", filename="doc.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("V_3", parent_text="Vector Context 3", filename="doc.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("V_4", parent_text="Vector Context 4", filename="doc.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("G_1", parent_text="Graph Context 1", filename="doc.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("G_2", parent_text="Graph Context 2", filename="doc.txt", source_path="", embedding=[0.1, 0.2])
+            self.graph.add_node("G_3", parent_text="Graph Context 3", filename="doc.txt", source_path="", embedding=[0.1, 0.2])
+            
+            # 建立图谱连边，用于 walk 和 ppr 游走
+            self.graph.add_edge("V_1", "G_1")
+            self.graph.add_edge("V_1", "G_2")
+            self.graph.add_edge("V_1", "G_3")
+
+        def hybrid_search(self, dense_vec, sparse_vec, top_k):
+            return [
+                {"metadata": {"parent_id": "V_1", "filename": "doc.txt", "parent_text": "Vector Context 1"}, "content": "Vector Context 1"},
+                {"metadata": {"parent_id": "V_2", "filename": "doc.txt", "parent_text": "Vector Context 2"}, "content": "Vector Context 2"},
+                {"metadata": {"parent_id": "V_3", "filename": "doc.txt", "parent_text": "Vector Context 3"}, "content": "Vector Context 3"},
+                {"metadata": {"parent_id": "V_4", "filename": "doc.txt", "parent_text": "Vector Context 4"}, "content": "Vector Context 4"},
+            ]
+
+    # 模拟 RerankerService
+    class MockRerankerService:
+        def __init__(self, score_override=None):
+            self.score_override = score_override
+
+        def rerank(self, query, candidates, top_k, cliff_threshold=999.0):
+            results = []
+            for i, c in enumerate(candidates):
+                score = self.score_override[i] if self.score_override and i < len(self.score_override) else 0.8
+                results.append({
+                    "content": c["content"],
+                    "metadata": c["metadata"],
+                    "rerank_score": score
+                })
+            # 降序排序
+            return sorted(results, key=lambda x: x["rerank_score"], reverse=True)
+
+    emb = MockEmbeddingService()
+    db = MockDBAdapter()
+
+    # 1. 向量 1.5 得分差断崖测试
+    # 设分数为 V_1=3.0, V_2=1.0, V_3=0.8, V_4=0.6。
+    # V_1 - V_2 = 2.0 > 1.5，断崖截断，只保留 V_1。
+    # 图谱通道去重后只有 V_1 被排除。
+    # GNN 空间紧邻拼接顺序：[V_1, G_1, G_2]
+    reranker_cliff1 = MockRerankerService(score_override=[3.0, 1.0, 0.8, 0.6])
+    retriever_cliff1 = GraphPostRetriever(emb, db, reranker_cliff1)
+    context_cliff1 = retriever_cliff1.query_graph_enhanced("test", graph_search_mode="heuristic_walk")
+    assert "Vector Context 1" in context_cliff1
+    assert "Vector Context 2" not in context_cliff1
+    assert "Vector Context 3" not in context_cliff1
+    assert "Graph Context 1" in context_cliff1
+    assert "Graph Context 2" in context_cliff1
+    
+    # 验证拼接顺序
+    lines = [line for line in context_cliff1.split("\n\n") if line.strip()]
+    assert len(lines) == 3
+    assert "Vector Context 1" in lines[0]
+    assert "Graph Context" in lines[1]
+    assert "Graph Context" in lines[2]
+
+    # 2. 首位分数 < 0.5 时的熔断测试
+    # 设分数为 V_1=0.49, V_2=0.48, V_3=0.47, V_4=0.46。不触发向量得分差断崖，但由于首位分数 0.49 < 0.5 触发熔断。
+    # 应只返回 V_1, V_2, V_3
+    reranker_fuse = MockRerankerService(score_override=[0.49, 0.48, 0.47, 0.46])
+    retriever_fuse = GraphPostRetriever(emb, db, reranker_fuse)
+    context_fuse = retriever_fuse.query_graph_enhanced("test", graph_search_mode="heuristic_walk")
+    assert "Vector Context 1" in context_fuse
+    assert "Vector Context 2" in context_fuse
+    assert "Vector Context 3" in context_fuse
+    assert "Graph Context" not in context_fuse
+
+    # 3 & 4. 解耦独立评分与图谱 0.4 相对比例断崖测试
+    # 重新定义 Mock 结构，以便更精准地控制相似度
+    class PreciseEmbeddingService:
+        def get_dense_embedding(self, query):
+            return [1.0, 0.0]
+        def get_sparse_embedding(self, query):
+            return {}
+
+    class PreciseDBAdapter:
+        def __init__(self):
+            self.graph = nx.Graph()
+            # V_1, V_2, V_3 作为向量通道
+            self.graph.add_node("V_1", parent_text="V1 Text", filename="doc.txt", source_path="", embedding=[1.0, 0.0])
+            self.graph.add_node("V_2", parent_text="V2 Text", filename="doc.txt", source_path="", embedding=[1.0, 0.0])
+            self.graph.add_node("V_3", parent_text="V3 Text", filename="doc.txt", source_path="", embedding=[1.0, 0.0])
+            
+            # G_1, G_2 作为图谱邻居
+            # G_1 的相似度为 1.0
+            self.graph.add_node("G_1", parent_text="G1 Text", filename="doc.txt", source_path="", embedding=[1.0, 0.0])
+            # G_2 的相似度为 0.3
+            self.graph.add_node("G_2", parent_text="G2 Text", filename="doc.txt", source_path="", embedding=[0.3, 0.9539])
+            
+            self.graph.add_edge("V_1", "G_1")
+            self.graph.add_edge("V_1", "G_2")
+
+        def hybrid_search(self, dense_vec, sparse_vec, top_k):
+            return [
+                {"metadata": {"parent_id": "V_1", "filename": "doc.txt", "parent_text": "V1 Text"}, "content": "V1 Text"},
+                {"metadata": {"parent_id": "V_2", "filename": "doc.txt", "parent_text": "V2 Text"}, "content": "V2 Text"},
+                {"metadata": {"parent_id": "V_3", "filename": "doc.txt", "parent_text": "V3 Text"}, "content": "V3 Text"},
+            ]
+
+    precise_emb = PreciseEmbeddingService()
+    precise_db = PreciseDBAdapter()
+    
+    # 设向量分数：V_1=0.9, V_2=0.8, V_3=0.7 (无向量断崖)
+    # 种子是 V_1，S_seed = 0.9。
+    # G_1 相似度 1.0。独立得分 Score_HW(G_1) = 0.9 * 1.0 = 0.9。
+    # G_2 相似度 0.3。独立得分 Score_HW(G_2) = 0.9 * 0.3 = 0.27。
+    # 比例断崖：0.27 < 0.4 * 0.9 (0.36) 成立！抛弃 G_2，仅保留 G_1。
+    # GNN 空间紧邻拼接顺序：[V_1, G_1, V_2, V_3]
+    reranker_cliff_g = MockRerankerService(score_override=[0.9, 0.8, 0.7])
+    retriever_cliff_g = GraphPostRetriever(precise_emb, precise_db, reranker_cliff_g)
+    context_cliff_g = retriever_cliff_g.query_graph_enhanced("test", graph_search_mode="heuristic_walk")
+    
+    assert "V1 Text" in context_cliff_g
+    assert "G1 Text" in context_cliff_g
+    assert "V2 Text" in context_cliff_g
+    assert "V3 Text" in context_cliff_g
+    assert "G2 Text" not in context_cliff_g
+    
+    # 5. 验证拼接顺序
+    parts = [p for p in context_cliff_g.split("\n\n") if p.strip()]
+    assert len(parts) == 4
+    assert "V1 Text" in parts[0]
+    assert "G1 Text" in parts[1]
+    assert "V2 Text" in parts[2]
+    assert "V3 Text" in parts[3]
+

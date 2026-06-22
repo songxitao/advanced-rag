@@ -136,25 +136,34 @@ class GraphPostRetriever:
         if not candidates:
             return ""
 
-        # 3. 一阶段 Rerank 对初筛结果进行重排，不限制截断
-        first_rerank = self.reranker.rerank(user_question, candidates, top_k=len(candidates))
+        # 3. 一阶段 Rerank 对初筛结果进行重排，不限制截断，传递大 threshold 防止内部截断
+        try:
+            first_rerank = self.reranker.rerank(user_question, candidates, top_k=len(candidates), cliff_threshold=999.0)
+        except TypeError:
+            first_rerank = self.reranker.rerank(user_question, candidates, top_k=len(candidates))
         if not first_rerank:
             return ""
 
-        # 4. 判定门控：首位得分低于 0.5 时，触发熔断
-        if first_rerank[0]["rerank_score"] < 0.5:
-            # 熔断处理：只取向量通道重排的前 3 个父块作为最终上下文返回，不再游走图谱
-            selected = first_rerank[:3]
+        # 4. 向量自适应断崖检测：对前3个向量块(依据实际长度)做 1.5 得分差断崖检测，落差大于 1.5 则截断后续所有向量候选
+        vector_results = first_rerank[:3]
+        cutoff_idx = -1
+        for i in range(len(vector_results) - 1):
+            diff = vector_results[i]["rerank_score"] - vector_results[i+1]["rerank_score"]
+            if diff > 1.5:
+                cutoff_idx = i + 1
+                break
+        if cutoff_idx != -1:
+            vector_results = vector_results[:cutoff_idx]
+
+        # 5. 熔断门控：首位向量分数 S_seed < 0.5 时，熔断图谱，只返回上述截断后的向量候选块
+        S_seed = first_rerank[0]["rerank_score"]
+        if S_seed < 0.5 or graph_search_mode == "none":
+            selected = vector_results
         else:
-            # 未熔断：
-            # 向量通道名额：取前 3 个作为向量结果
-            vector_results = first_rerank[:3]
-            vector_pids = {c["metadata"].get("parent_id") for c in vector_results}
-            
-            # 第一名（Seed Node）的 parent_id
+            # 未熔断
+            # 以 V_1 的 parent_id 作为唯一种子节点 Seed
             seed_node_id = first_rerank[0]["metadata"].get("parent_id")
             
-            # 图谱通道评分与截取：以 seed_node_id 为种子节点运行图检索
             graph_scores = []
             if seed_node_id:
                 if graph_search_mode == "heuristic_walk":
@@ -162,12 +171,34 @@ class GraphPostRetriever:
                 elif graph_search_mode == "ppr":
                     graph_scores = run_personalized_pagerank(self.db_adapter.graph, seed_node_id, top_k=5)
             
-            # 过滤去重：剔除已经在 vector_results 中出现过的节点
-            filtered_graph_scores = [item for item in graph_scores if item[0] not in vector_pids]
+            # 解耦独立打分：
+            # 若 ppr：Score_PPR(v) = S_seed * PPR(v)
+            # 若 heuristic_walk：Score_HW(v) = S_seed * Sim(v, Q)
+            calculated_graph_scores = []
+            for pid, val in graph_scores:
+                score = S_seed * val
+                calculated_graph_scores.append((pid, score))
             
-            # 排序与截取：按自身打分降序排列，截取前 2 个作为图谱结果
+            # 图谱去重与比例断崖：
+            # 去除已经被截断后保留的向量块占用的 parent_id
+            vector_pids = {c["metadata"].get("parent_id") for c in vector_results}
+            filtered_graph_scores = [item for item in calculated_graph_scores if item[0] not in vector_pids]
+            
+            # 排序与比例断崖截取：
+            # 排序后的前 2 个图谱节点 G_1, G_2，如果 Score(G_2) < 0.4 * Score(G_1)，触发比例断崖，抛弃 G_2 仅保留 G_1。
             filtered_graph_scores.sort(key=lambda x: x[1], reverse=True)
-            top_graph_pids = [pid for pid, score in filtered_graph_scores[:2]]
+            top_graph_results = []
+            if len(filtered_graph_scores) == 1:
+                top_graph_results = [filtered_graph_scores[0]]
+            elif len(filtered_graph_scores) >= 2:
+                g1 = filtered_graph_scores[0]
+                g2 = filtered_graph_scores[1]
+                if g2[1] < 0.4 * g1[1]:
+                    top_graph_results = [g1]
+                else:
+                    top_graph_results = [g1, g2]
+            
+            top_graph_pids = [pid for pid, score in top_graph_results]
             
             # 补齐图谱节点信息
             candidates_dict = {c["metadata"]["parent_id"]: c for c in candidates}
@@ -189,13 +220,18 @@ class GraphPostRetriever:
                         }
                     })
             
-            # 合并：图谱块免除二次 Rerank，直接强行 Append 到 vector_results 后面
-            selected = vector_results + graph_vector_results
+            # GNN 空间紧邻拼接：拼接后返回的格式顺序确保为：[V_1, G_1, G_2, V_2, V_3]（或断崖裁剪后的实际子集）
+            selected = []
+            if len(vector_results) > 0:
+                selected.append(vector_results[0])
+            selected.extend(graph_vector_results)
+            if len(vector_results) > 1:
+                selected.extend(vector_results[1:])
 
         if not selected:
             return ""
 
-        # 5. 执行父块替换并拼接格式化后的上下文字符串
+        # 6. 执行父块替换并拼接格式化后的上下文字符串
         formatted_parts = []
         for idx, candidate in enumerate(selected, 1):
             filename = candidate["metadata"].get("filename", "未知文件")
