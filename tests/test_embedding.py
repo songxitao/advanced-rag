@@ -18,3 +18,11 @@ def test_embedding_service_batch():
     assert len(dense_list) == 2
     assert len(dense_list[0]) == 1024
     assert len(dense_list[1]) == 1024
+
+def test_embedding_device():
+    import torch
+    service = LocalEmbeddingService()
+    if torch.cuda.is_available():
+        assert service.model.device.type == "cuda"
+    else:
+        assert service.model.device.type == "cpu"

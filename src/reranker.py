@@ -9,12 +9,15 @@ os.environ['TRANSFORMERS_OFFLINE'] = '1'
 from sentence_transformers import CrossEncoder
 
 class RerankerService:
-    def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3", device: str = "cpu"):
+    def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3", device: str = None):
         """
         初始化 RerankerService
         :param model_name: 模型名称或本地路径，默认为 "BAAI/bge-reranker-v2-m3"
         :param device: 运行设备, 如 "cuda" 或 "cpu"
         """
+        import torch
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = CrossEncoder(model_name, device=device)
 
     def rerank(self, query: str, candidates: list[dict], top_k: int, cliff_threshold: float = 1.5) -> list[dict]:
@@ -32,7 +35,7 @@ class RerankerService:
 
         # 构造句子对 (query, child_text)，其中 child_text 存储在 candidate["content"] 中
         pairs = [[query, c["content"]] for c in candidates]
-        scores = self.model.predict(pairs)
+        scores = self.model.predict(pairs, batch_size=32)
 
         # 兼容 predict 返回单个标量分数的情况
         if not hasattr(scores, "__len__"):

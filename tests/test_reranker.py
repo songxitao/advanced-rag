@@ -2,7 +2,7 @@ import pytest
 from src.reranker import RerankerService
 
 class MockRerankerModel:
-    def predict(self, pairs):
+    def predict(self, pairs, **kwargs):
         # 模拟重排分数输出：
         # 高相关1: 2.5
         # 高相关2: 2.3
@@ -49,3 +49,11 @@ def test_reranker_service_cliff_cutoff():
     assert len(selected) == 2
     assert selected[0]["content"] == "高相关1内容"
     assert selected[1]["content"] == "高相关2内容"
+
+def test_reranker_device_and_batch():
+    import torch
+    service = RerankerService()
+    if torch.cuda.is_available():
+        assert service.model.model.device.type == "cuda"
+    else:
+        assert service.model.model.device.type == "cpu"

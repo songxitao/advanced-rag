@@ -1,4 +1,5 @@
 import os
+import sys
 from collections import Counter
 from typing import List, Dict
 
@@ -12,12 +13,15 @@ os.environ['TRANSFORMERS_OFFLINE'] = '1'
 from sentence_transformers import SentenceTransformer
 
 class LocalEmbeddingService:
-    def __init__(self, device: str = "cuda", model_name: str = "BAAI/bge-m3"):
+    def __init__(self, device: str = None, model_name: str = "BAAI/bge-m3"):
         """
         初始化 LocalEmbeddingService
         :param device: 运行设备, 如 "cuda" 或 "cpu"
         :param model_name: 模型名称或本地路径，默认为 "BAAI/bge-m3"
         """
+        import torch
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = SentenceTransformer(model_name, device=device)
         
         # 兼容不同版本的 sentence-transformers 获取 tokenizer 的方式
@@ -45,14 +49,41 @@ class LocalEmbeddingService:
 
     def get_dense_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """
-        批量获取 texts 的 dense 向量 (1024维)
-        :param texts: 输入文本列表
-        :return: 稠密向量列表
+        批量获取 texts 的 dense 向量 (1024维)，分批打印进度防死锁怀疑
         """
         if not texts:
             return []
-        embeddings = self.model.encode(texts, convert_to_numpy=True)
-        return embeddings.tolist()
+            
+        batch_size = 8
+        results = []
+        total = len(texts)
+        
+        print(f"\n[LocalEmbeddingService] Start calculating dense embeddings for {total} chunks...")
+        sys.stdout.flush()
+        
+        batch_idx = 0
+        for i in range(0, total, batch_size):
+            batch_idx += 1
+            sub_texts = texts[i:i+batch_size]
+            
+            # 在开始计算前打印详细的 Chunk 序号、范围和每个 Chunk 的开头 30 个字符预览
+            print(f"\n[LocalEmbeddingService] Computing Batch #{batch_idx} (Chunks {i} to {i + len(sub_texts) - 1}):")
+            for idx, text in enumerate(sub_texts):
+                chunk_num = i + idx
+                preview = text[:30].replace('\n', ' ')
+                print(f"  - Chunk #{chunk_num}: {preview}...")
+            sys.stdout.flush()
+            
+            embeddings = self.model.encode(sub_texts, convert_to_numpy=True, show_progress_bar=False)
+            results.extend(embeddings.tolist())
+            
+            current_end = min(i + batch_size, total)
+            print(f"[LocalEmbeddingService] Progress: {current_end}/{total} chunks computed.")
+            sys.stdout.flush()
+            
+        print("[LocalEmbeddingService] All dense embeddings computed successfully!\n")
+        sys.stdout.flush()
+        return results
 
     def get_sparse_embedding(self, text: str) -> Dict[str, float]:
         """
