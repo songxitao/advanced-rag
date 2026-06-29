@@ -100,5 +100,84 @@ def test_database_graph_linking(tmp_path):
     
     # 验证跨文档语义关联边 (p1, p5)
     # p1 在 test_doc1.txt，p5 在 test_doc2.txt，余弦相似度 ≈ 0.998 >= 0.85
-    assert adapter.graph.has_edge("p1", "p5")
     assert adapter.graph.get_edge_data("p1", "p5")["type"] == "semantic"
+
+def test_database_graph_empty_and_robustness(tmp_path):
+    db_dir = tmp_path / "test_chroma_db_robust"
+    adapter = ChromaAdapter(db_dir=str(db_dir))
+    
+    # 1. 库为空时 rebuild_graph 应安全返回
+    adapter.rebuild_graph()
+    assert len(adapter.graph.nodes) == 0
+    
+    # 2. 库为空时 _rebuild_bm25 应安全返回
+    adapter._rebuild_bm25()
+    assert adapter.bm25 is None
+    
+    # 3. 传入空 chunks 时 add_chunks 应安全处理
+    adapter.add_chunks([], [])
+    assert len(adapter.graph.nodes) == 0
+
+
+def test_graph_edge_weights_and_idf():
+    import shutil
+    import tempfile
+    import os
+    from src.loader import DocumentLoader
+    from src.splitter import SemanticParentChildSplitter
+    from src.embedding import LocalEmbeddingService
+    from src.database import ChromaAdapter
+    from src.coordinator import RAGCoordinator
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        loader = DocumentLoader()
+        emb = LocalEmbeddingService(device="cpu")
+        splitter = SemanticParentChildSplitter(embedding_service=emb, threshold=2.0, child_size=30, min_parent_size=5)
+        db = ChromaAdapter(db_dir=tmpdir)
+        coordinator = RAGCoordinator(loader, splitter, emb, db, None)
+
+        # 写入包含高频词"刘备"和罕见词"督邮"的测试文档
+        # 块1：刘备 督邮 怒鞭
+        # 块2：刘备 督邮 刁难
+        # 块3：刘备 娶妻 孙尚香
+        test_file = os.path.join(tmpdir, "test_weight_doc.txt")
+        with open(test_file, "w", encoding="utf-8") as f:
+            f.write("角色 刘备 和 角色 督邮 在这里，怒鞭督邮。\n\n"
+                    "角色 刘备 被 角色 督邮 刁难了。\n\n"
+                    "角色 刘备 娶了 角色 孙尚香。")
+        
+        coordinator.add_file(test_file)
+        graph = db.graph
+        
+        # 验证实体边权重
+        # 寻找仅通过常见词"刘备"相连的实体边（块3和块1之间仅有"刘备"）
+        # 寻找通过罕见词"督邮"相连的实体边（块1和块2之间有"督邮"和"刘备"）
+        node_1_id = None
+        node_2_id = None
+        node_3_id = None
+        for node_id, data in graph.nodes(data=True):
+            text = data.get("parent_text", "")
+            if "怒鞭督邮" in text:
+                node_1_id = node_id
+            elif "刁难" in text:
+                node_2_id = node_id
+            elif "娶了" in text:
+                node_3_id = node_id
+
+        assert node_1_id is not None
+        assert node_2_id is not None
+        assert node_3_id is not None
+
+        # 块1与块2包含"督邮"（罕见），块1与块3仅包含"刘备"（高频）
+        edge_1_2 = graph.get_edge_data(node_1_id, node_2_id)
+        edge_1_3 = graph.get_edge_data(node_1_id, node_3_id)
+
+        # 必须包含带有指数拉伸的 weight 属性
+        assert "weight" in edge_1_2
+        assert "weight" in edge_1_3
+        assert edge_1_2["weight"] > edge_1_3["weight"]
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
