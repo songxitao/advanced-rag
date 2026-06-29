@@ -57,6 +57,15 @@ class ChromaAdapter(VectorStoreAdapter):
         else:
             self.bm25 = None
 
+    def _add_weighted_edge(self, u: str, v: str, edge_type: str, weight: float) -> None:
+        """添加或更新带权边，遵循强关联优先（取最大值）策略"""
+        if self.graph.has_edge(u, v):
+            existing_data = self.graph[u][v]
+            if weight > existing_data.get("weight", 0.0):
+                self.graph.add_edge(u, v, type=edge_type, weight=weight)
+        else:
+            self.graph.add_edge(u, v, type=edge_type, weight=weight)
+
     def rebuild_graph(self) -> None:
         """从已存的 Chroma 中提取所有 chunks 数据，重建 NetworkX 内存图并建立三轨连边"""
         self.graph = nx.Graph()
@@ -127,17 +136,19 @@ class ChromaAdapter(VectorStoreAdapter):
                 v = sorted_nodes[i+1][0]
                 # 计算物理边权重并指数拉伸 (w_base = 0.3)
                 weight = float(np.exp(4 * 0.3))
-                self.graph.add_edge(u, v, type="physical", weight=weight)
+                self._add_weighted_edge(u, v, "physical", weight)
 
         # 4. 无监督 TF-IDF 实体共现边
         # 4.1 动态注册脱敏代号到分词器中
         pattern = re.compile(r"(?:角色|代号|项目|特工)\s*[A-Za-z0-9_]+")
+        words_to_register = set()
         for pid in self.graph.nodes:
             text = self.graph.nodes[pid].get("parent_text", "")
-            if not text:
-                continue
-            for match in pattern.finditer(text):
-                jieba.add_word(match.group(0), tag='n')
+            if text:
+                for match in pattern.finditer(text):
+                    words_to_register.add(match.group(0))
+        for word in words_to_register:
+            jieba.add_word(word, tag='n')
 
         # 4.2 用 jieba.posseg 对父块分词，仅保留名词和英文词性。统计特征词频（提取 Top-5 关键词）并统计全局名词 DF
         keywords = {}
@@ -184,7 +195,7 @@ class ChromaAdapter(VectorStoreAdapter):
                         sum_idf = sum(get_idf(w) for w in shared)
                         w_base = min(1.0, sum_idf * 0.2)
                         weight = float(np.exp(4 * w_base))
-                        self.graph.add_edge(u, v, type="entity", weight=weight)
+                        self._add_weighted_edge(u, v, "entity", weight)
 
         # 5. 局域与 ANN 语义关联边
         # 5.1 同一文档内部：使用 NumPy 矩阵乘法批量计算余弦相似度，避免 $O(N^2)$ 双重 Python 循环
@@ -209,7 +220,7 @@ class ChromaAdapter(VectorStoreAdapter):
                         # 语义关联边：使用实际相似度并进行指数拉伸
                         w_base = float(sim_matrix[i, j])
                         weight = float(np.exp(4 * w_base))
-                        self.graph.add_edge(u, v, type="semantic", weight=weight)
+                        self._add_weighted_edge(u, v, "semantic", weight)
 
         # 5.2 跨文档：批量 Query 优化，减少在数据库规模较大时频繁单次 Query 导致的 I/O 与性能退化
         nodes_list = list(self.graph.nodes)
@@ -222,10 +233,14 @@ class ChromaAdapter(VectorStoreAdapter):
             )
             
             if results.get("metadatas") and results.get("distances"):
+                metas_list = results["metadatas"]
+                dists_list = results["distances"]
                 for i, u in enumerate(nodes_list):
+                    if i >= len(metas_list) or i >= len(dists_list):
+                        break
                     src_u = self.graph.nodes[u]["source_path"]
-                    metas = results["metadatas"][i]
-                    dists = results["distances"][i]
+                    metas = metas_list[i]
+                    dists = dists_list[i]
                     if metas:
                         for idx, meta in enumerate(metas):
                             if meta is None:
@@ -239,7 +254,7 @@ class ChromaAdapter(VectorStoreAdapter):
                                     # 语义关联边：使用实际相似度并进行指数拉伸
                                     w_base = float(sim)
                                     weight = float(np.exp(4 * w_base))
-                                    self.graph.add_edge(u, v, type="semantic", weight=weight)
+                                    self._add_weighted_edge(u, v, "semantic", weight)
 
     def add_chunks(self, chunks_data: List[Dict[str, Any]], dense_embeddings: List[List[float]]) -> None:
         """在 Chroma 里存储 child_text 作为 document，并同步重建 BM25 与 NetworkX 内存图"""

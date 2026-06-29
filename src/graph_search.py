@@ -71,8 +71,8 @@ def run_semantic_random_walk(graph: nx.Graph, seed_node_id: str, query_vector: l
             sim = cosine_similarity(query_vector, emb)
             sims_1st.append((n, sim))
             
-    # 按相似度降序排序，取 Top-3 个 1 跳节点
-    sims_1st.sort(key=lambda x: x[1], reverse=True)
+    # 按相似度降序排序（相似度相同时按节点 ID 字母序升序），取 Top-3 个 1 跳节点
+    sims_1st.sort(key=lambda x: (-x[1], x[0]))
     top_1st = [n for n, _ in sims_1st[:3]]
     
     # 2. 第 2 跳：分别获取上述选中的 1 跳节点的直接邻居
@@ -89,22 +89,22 @@ def run_semantic_random_walk(graph: nx.Graph, seed_node_id: str, query_vector: l
                 sim = cosine_similarity(query_vector, emb)
                 sims_2nd.append((n2, sim))
                 
-        # 降序排序，取 Top-2 个
-        sims_2nd.sort(key=lambda x: x[1], reverse=True)
+        # 降序排序（相似度相同时按节点 ID 字母序升序），取 Top-2 个
+        sims_2nd.sort(key=lambda x: (-x[1], x[0]))
         for n2, _ in sims_2nd[:2]:
             candidates_2nd.add(n2)
             
     # 3. 合并并去重所有选中的 1 跳与 2 跳邻居
     all_selected = set(top_1st) | candidates_2nd
     
-    # 按照与 query_vector 的相似度降序排序后，截取前 Top-K 返回
+    # 按照与 query_vector 的相似度降序排序后（相似度相同时按节点 ID 字母序升序），截取前 Top-K 返回
     final_list = []
     for node in all_selected:
         emb = graph.nodes[node].get("embedding")
         sim = cosine_similarity(query_vector, emb) if emb is not None else -1.0
         final_list.append((node, sim))
         
-    final_list.sort(key=lambda x: x[1], reverse=True)
+    final_list.sort(key=lambda x: (-x[1], x[0]))
     return final_list[:top_k]
 
 
@@ -215,7 +215,7 @@ class GraphPostRetriever:
                             "parent_text": node_data.get("parent_text", ""),
                             "source_path": node_data.get("source_path", ""),
                             "filename": node_data.get("filename", ""),
-                            "char_start": 0,
+                            "char_start": node_data.get("char_start", 0),
                             "char_end": 0
                         }
                     })
@@ -230,6 +230,9 @@ class GraphPostRetriever:
 
         if not selected:
             return ""
+
+        # 做题阶段：统一将选出的上下文片段按照在原著中的物理先后顺序（时间线）进行重排序，提高大模型理解的丝滑度
+        selected = sorted(selected, key=lambda x: x["metadata"].get("char_start", 0))
 
         # 6. 执行父块替换并拼接格式化后的上下文字符串
         formatted_parts = []
