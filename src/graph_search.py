@@ -210,7 +210,7 @@ class GraphPostRetriever:
                     graph_scores = run_semantic_random_walk(self.db_adapter.graph, seed_node_id, dense_vec, top_k=5)
                 elif graph_search_mode == "ppr":
                     import numpy as np
-                    edge_thr = float(np.exp(4 * 0.5))
+                    edge_thr = float(np.exp(4 * 0.3))
                     graph_scores = run_personalized_pagerank(
                         self.db_adapter.graph, 
                         seed_node_id, 
