@@ -209,7 +209,14 @@ class GraphPostRetriever:
                 if graph_search_mode == "heuristic_walk":
                     graph_scores = run_semantic_random_walk(self.db_adapter.graph, seed_node_id, dense_vec, top_k=5)
                 elif graph_search_mode == "ppr":
-                    graph_scores = run_personalized_pagerank(self.db_adapter.graph, seed_node_id, top_k=5)
+                    import numpy as np
+                    edge_thr = float(np.exp(4 * 0.5))
+                    graph_scores = run_personalized_pagerank(
+                        self.db_adapter.graph, 
+                        seed_node_id, 
+                        top_k=5, 
+                        edge_threshold=edge_thr
+                    )
             
             # 解耦独立打分：
             # 若 ppr：Score_PPR(v) = S_seed * PPR(v)
