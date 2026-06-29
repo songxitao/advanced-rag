@@ -13,12 +13,18 @@ def cosine_similarity(v1: list[float], v2: list[float]) -> float:
         return 0.0
     return float(np.dot(arr1, arr2) / (norm1 * norm2))
 
-def run_personalized_pagerank(graph: nx.Graph, seed_node_id: str, top_k: int = 5) -> list[tuple[str, float]]:
+def run_personalized_pagerank(
+    graph: nx.Graph, 
+    seed_node_id: str, 
+    top_k: int = 5, 
+    edge_threshold: float = 0.0
+) -> list[tuple[str, float]]:
     """
-    以 seed_node_id 设为唯一能量源计算全图 Personalized PageRank 分数。
+    以 seed_node_id 设为唯一能量源计算 2-Hop 剪枝子图的 Personalized PageRank 分数。
     :param graph: 内存 NetworkX 图
     :param seed_node_id: 起点（种子）节点 ID
     :param top_k: 捞回的 Top-K 节点数
+    :param edge_threshold: 边权重过滤阈值
     :return: 捞回的父块 parent_id 和分数的元组列表（已过滤掉起点本身）
     """
     if seed_node_id not in graph:
@@ -26,19 +32,53 @@ def run_personalized_pagerank(graph: nx.Graph, seed_node_id: str, top_k: int = 5
     if len(graph.nodes) <= 1:
         return []
     
+    # 提取强 1 跳邻居
+    neighbors_1st = set()
+    for n in graph.neighbors(seed_node_id):
+        edge_data = graph.get_edge_data(seed_node_id, n)
+        # 防御性：若旧测试图无 weight，取无穷大确保其不被过滤
+        weight = edge_data.get("weight", float('inf'))
+        if weight >= edge_threshold:
+            neighbors_1st.add(n)
+            
+    # 提取强 2 跳邻居
+    neighbors_2nd = set()
+    for n1 in neighbors_1st:
+        for n in graph.neighbors(n1):
+            edge_data = graph.get_edge_data(n1, n)
+            weight = edge_data.get("weight", float('inf'))
+            if weight >= edge_threshold and n != seed_node_id:
+                neighbors_2nd.add(n)
+                
+    # 组装节点集合并提取子图
+    target_nodes = {seed_node_id} | neighbors_1st | neighbors_2nd
+    if len(target_nodes) <= 1:  # 节点太少，不足以构成合理的转移链条
+        return []
+        
+    sub_graph = graph.subgraph(target_nodes).copy()
+    
+    # 过滤子图中的弱边
+    edges_to_remove = []
+    for u, v, data in sub_graph.edges(data=True):
+        weight = data.get("weight", float('inf'))
+        if weight < edge_threshold:
+            edges_to_remove.append((u, v))
+    sub_graph.remove_edges_from(edges_to_remove)
+    
     # 构造 personalization 字典，仅 seed_node_id 为 1.0，其余为 0.0
-    personalization = {node: 0.0 for node in graph.nodes}
+    personalization = {node: 0.0 for node in sub_graph.nodes}
     personalization[seed_node_id] = 1.0
     
     try:
-        # 调用 nx.pagerank 计算全图节点分值
-        scores = nx.pagerank(graph, alpha=0.85, personalization=personalization, max_iter=100)
+        # 调用 nx.pagerank 计算子图节点分值
+        scores = nx.pagerank(sub_graph, alpha=0.85, personalization=personalization, max_iter=100, weight='weight')
     except Exception:
         # 若因图未连通或计算不收敛抛出异常，做防御返回空
         return []
     
     # 根据分值降序排序，过滤掉 seed_node_id 自身后返回 Top-K 的 (parent_id, score) 元组列表
-    sorted_nodes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    # 以分数降序、节点 ID 字母序升序排序
+    sorted_nodes = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
     result = [(node, score) for node, score in sorted_nodes if node != seed_node_id]
     
     return result[:top_k]

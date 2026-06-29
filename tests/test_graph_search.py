@@ -366,3 +366,24 @@ def test_asymmetric_quota_cliff_and_reorder():
     assert "V2 Text" in parts[2]
     assert "V3 Text" in parts[3]
 
+
+def test_weighted_subgraph_pagerank():
+    g = nx.Graph()
+    # 节点
+    g.add_node("seed", embedding=[1.0, 0.0])
+    g.add_node("strong_1hop", embedding=[0.9, 0.1])
+    g.add_node("weak_1hop", embedding=[0.1, 0.9])
+    
+    # 边，一个强，一个弱（强边通过通行门控，弱边不行）
+    g.add_edge("seed", "strong_1hop", weight=10.0) # 大于门控阈值 7.3
+    g.add_edge("seed", "weak_1hop", weight=2.0)    # 小于门控阈值 7.3
+    
+    # 从 seed 出发进行带权剪枝 PPR
+    # 阈值为 7.3 (相当于 w_base >= 0.5)
+    res = run_personalized_pagerank(g, "seed", top_k=5, edge_threshold=7.3)
+    
+    pids = [node for node, score in res]
+    assert "strong_1hop" in pids
+    assert "weak_1hop" not in pids # 弱边邻居在提取子图时被剪枝忽略
+
+
