@@ -2,6 +2,8 @@ import os
 import re
 import fitz
 import docx
+import requests
+import logging
 
 class DocumentLoader:
     def load(self, file_path: str) -> str:
@@ -15,12 +17,44 @@ class DocumentLoader:
                 return f.read()
                 
         elif ext == '.pdf':
-            text = []
-            doc = fitz.open(file_path)
-            for page in doc:
-                text.append(page.get_text())
-            doc.close()
-            return "".join(text).strip()
+            try:
+                url = "http://127.0.0.1:8010/file_parse"
+                data = {
+                    "backend": "pipeline",
+                    "parse_method": "auto",
+                    "formula_enable": "true",
+                    "table_enable": "true",
+                    "return_md": "true",
+                    "response_format_zip": "false"
+                }
+                with open(file_path, 'rb') as f:
+                    files = [("files", (os.path.basename(file_path), f, "application/pdf"))]
+                    response = requests.post(url, data=data, files=files, timeout=60)
+                    response.raise_for_status()
+                    res_json = response.json()
+                    
+                    md_content = None
+                    if isinstance(res_json, dict):
+                        filename_stem = os.path.splitext(os.path.basename(file_path))[0]
+                        # 优先从 results -> filename_stem -> md_content 路径提取
+                        md_content = res_json.get("results", {}).get(filename_stem, {}).get("md_content")
+                        # 兼容其它可能的格式
+                        if md_content is None:
+                            md_content = res_json.get("md_content")
+                        if md_content is None and isinstance(res_json.get("data"), dict):
+                            md_content = res_json["data"].get("md_content")
+                            
+                    if md_content is None:
+                        raise KeyError("md_content not found in response JSON")
+                    return md_content.strip()
+            except Exception as e:
+                logging.warning(f"MinerU parsing failed ({e}). Falling back to fitz (PyMuPDF).")
+                text = []
+                doc = fitz.open(file_path)
+                for page in doc:
+                    text.append(page.get_text())
+                doc.close()
+                return "".join(text).strip()
             
         elif ext == '.docx':
             doc = docx.Document(file_path)

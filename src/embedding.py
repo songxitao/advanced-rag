@@ -71,7 +71,10 @@ class LocalEmbeddingService:
             for idx, text in enumerate(sub_texts):
                 chunk_num = i + idx
                 preview = text[:30].replace('\n', ' ')
-                print(f"  - Chunk #{chunk_num}: {preview}...")
+                # 安全兼容：替换掉当前终端编码（如 GBK）不支持的特殊连字符等
+                encoding = sys.stdout.encoding or 'gbk'
+                preview_safe = preview.encode(encoding, errors='replace').decode(encoding)
+                print(f"  - Chunk #{chunk_num}: {preview_safe}...")
             sys.stdout.flush()
             
             embeddings = self.model.encode(sub_texts, convert_to_numpy=True, show_progress_bar=False)

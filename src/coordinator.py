@@ -28,7 +28,7 @@ class RAGCoordinator:
 
         # 2. 根据扩展名判定是否为 Markdown 文件，并切出父子块
         ext = os.path.splitext(file_path)[1].lower()
-        is_markdown = (ext == '.md')
+        is_markdown = (ext in ['.md', '.pdf'])
         chunks = self.splitter.create_parent_child_chunks(text, is_markdown=is_markdown)
         if not chunks:
             raise ValueError(f"未能为该文件生成任何有效的语义切片块: {file_path}")
