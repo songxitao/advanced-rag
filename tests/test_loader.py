@@ -1,5 +1,4 @@
 import pytest
-import docx
 import fitz
 from src.loader import DocumentLoader
 
@@ -43,6 +42,7 @@ def test_document_loader_pdf(tmp_path):
     assert "Hello PDF Document" in text
 
 def test_document_loader_docx(tmp_path):
+    docx = pytest.importorskip("docx")
     test_file = tmp_path / "test.docx"
     # 创建一个临时的 Word 文件并写入文本
     doc = docx.Document()

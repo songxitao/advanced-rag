@@ -1,11 +1,54 @@
 import os
 import re
 import fitz
-import docx
 import requests
 import logging
 
 class DocumentLoader:
+    def _convert_via_markitdown(self, file_path: str) -> str:
+        """
+        通过子进程调用 markitdown CLI 将文件转换为 Markdown 格式字符串。
+        markitdown 安装在独立的 conda 环境 markitdown-env 中。
+        :param file_path: 待转换文件的绝对或相对路径
+        :return: 转换后的 Markdown 字符串
+        :raises RuntimeError: markitdown 调用失败时抛出
+        """
+        import subprocess
+        import sys
+        conda_cmd = "conda"
+        if sys.platform == "win32":
+            conda_cmd = "conda.bat"
+            common_paths = [
+                r"D:\program files\Miniconda\condabin\conda.bat",
+                r"C:\Users\song\miniconda3\condabin\conda.bat",
+                r"C:\ProgramData\anaconda3\condabin\conda.bat",
+            ]
+            for cp in common_paths:
+                if os.path.exists(cp):
+                    conda_cmd = cp
+                    break
+        abs_path = os.path.abspath(file_path)
+        try:
+            result = subprocess.run(
+                [conda_cmd, "run", "-n", "markitdown-env", "markitdown", abs_path],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                encoding="utf-8"
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"markitdown 转换失败 (exit code {result.returncode}): {result.stderr.strip()}"
+                )
+            output = result.stdout.strip()
+            if not output:
+                raise RuntimeError(f"markitdown 转换结果为空: {abs_path}")
+            return output
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"markitdown 运行超时(120s): {abs_path}")
+        except FileNotFoundError:
+            raise RuntimeError("conda 命令未找到，请确保 conda 已安装并放入 PATH 中")
+
     def load(self, file_path: str) -> str:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
@@ -57,9 +100,10 @@ class DocumentLoader:
                 return "".join(text).strip()
             
         elif ext == '.docx':
-            doc = docx.Document(file_path)
-            text = [p.text for p in doc.paragraphs]
-            return "\n".join(text).strip()
+            return self._convert_via_markitdown(file_path)
+            
+        elif ext in ['.xlsx', '.xls']:
+            return self._convert_via_markitdown(file_path)
             
         elif ext == '.srt':
             with open(file_path, 'r', encoding='utf-8') as f:
