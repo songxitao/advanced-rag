@@ -25,6 +25,10 @@ class AddFileResponse(BaseModel):
     status: str
     message: str
 
+class GraphQueryRequest(BaseModel):
+    query: str
+    graph_search_mode: str = "heuristic_walk"
+
 @app.on_event("startup")
 def startup_event():
     """在服务启动时延迟加载 RAG 组件，支持测试时注入 Mock 实例"""
@@ -99,3 +103,31 @@ def add_file(request: AddFileRequest):
         return AddFileResponse(status="success", message=f"文件 {os.path.basename(file_path)} 导入并索引成功")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文件导入处理出错: {str(e)}")
+
+@app.post("/retrieve_graph")
+def retrieve_graph(request: GraphQueryRequest, req: Request):
+    """
+    进行图增强混合检索与重排精选，返回父块拼接上下文
+    """
+    if not hasattr(app.state, "coordinator") or app.state.coordinator is None:
+        raise HTTPException(status_code=503, detail="RAG 服务未就绪")
+    
+    try:
+        from src.graph_search import GraphPostRetriever
+        coord = app.state.coordinator
+        retriever = GraphPostRetriever(
+            embedding_service=coord.embedding_service,
+            db_adapter=coord.db_adapter,
+            reranker=coord.reranker
+        )
+        context = retriever.query_graph_enhanced(request.query, request.graph_search_mode)
+        
+        # 检查 Accept 请求头是否倾向于接收纯文本（方便 Dify 直接调用）
+        accept_header = req.headers.get("accept", "")
+        if "text/plain" in accept_header:
+            return Response(content=context, media_type="text/plain; charset=utf-8")
+            
+        # 默认返回 JSON 结构
+        return {"context": context}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"图增强检索处理出错: {str(e)}")
