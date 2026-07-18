@@ -129,11 +129,13 @@ def render_ast_node_to_md(node) -> str:
         return ""
 
 class SemanticParentChildSplitter:
-    def __init__(self, embedding_service, threshold=None, child_size=150, window_size=3):
+    def __init__(self, embedding_service, threshold=None, child_size=150, window_size=3, min_parent_size=300, max_parent_size=800):
         self.embedding_service = embedding_service
         self.threshold = threshold
         self.child_size = max(1, child_size)
         self.window_size = max(1, window_size)
+        self.min_parent_size = min_parent_size
+        self.max_parent_size = max_parent_size
 
     def _cosine_similarity(self, v1: list[float], v2: list[float]) -> float:
         if not v1 or not v2 or len(v1) != len(v2):
@@ -150,6 +152,8 @@ class SemanticParentChildSplitter:
         remaining = parent_text
         # 英文与中文的常见标点符号和空格换行
         punctuation = "。？！，、；\n!?.,; "
+        # 额外词边界字符：中英文之间、英文单词之间的分隔符
+        word_boundary = set(" \t")
         
         while len(remaining) > child_size:
             sub_text = remaining[:child_size]
@@ -161,8 +165,23 @@ class SemanticParentChildSplitter:
                     break
             
             if split_idx == -1:
-                # 如果没找到标点符号，暴力截断
-                split_idx = child_size
+                # 没找到标点，往前额外找词边界（最多 +20 字符），避免切碎英文单词
+                lookahead_limit = min(child_size + 20, len(remaining))
+                extended_text = remaining[:lookahead_limit]
+                for i in range(child_size, lookahead_limit):
+                    if extended_text[i] in word_boundary:
+                        split_idx = i + 1
+                        break
+                if split_idx == -1:
+                    # 仍然找不到，退回到 child_size 附近找最后一个非字母数字点
+                    for i in range(child_size - 1, max(0, child_size - 10), -1):
+                        ch = remaining[i]
+                        if not ch.isalnum() and ch not in punctuation:
+                            split_idx = i + 1
+                            break
+                    # 终极兜底：硬截断
+                    if split_idx == -1:
+                        split_idx = child_size
                 
             chunks.append(remaining[:split_idx])
             remaining = remaining[split_idx:]
@@ -296,26 +315,59 @@ class SemanticParentChildSplitter:
             if current_chunk:
                 parent_chunks.append("".join(current_chunk))
                 
-        # 4.5 兜底合并超短 parent_chunks (保证召回丰富文本，最小 150 字符，仅在 markdown 模式下启用以避免破坏传统文本基准测试)
-        if is_markdown:
-            min_parent_size = 150
-            merged_parents = []
-            temp_parent = ""
-            for p_chunk in parent_chunks:
-                if not temp_parent:
-                    temp_parent = p_chunk
-                else:
-                    if len(temp_parent) < min_parent_size:
-                        temp_parent = temp_parent.rstrip('\n') + '\n' + p_chunk.lstrip('\n')
+        # 4.5 长度限制逻辑：若 parent_chunk 大于 max_parent_size，按标点符号断句重新拆分
+        split_parents = []
+        for p_chunk in parent_chunks:
+            if len(p_chunk) > self.max_parent_size:
+                sub_sentences = re.split(r'(?<=[。？！!?])|(?<=\n\n)', p_chunk)
+                sub_sentences = [s for s in sub_sentences if s]
+                
+                final_sents = []
+                for sent in sub_sentences:
+                    if len(sent) > self.max_parent_size:
+                        remaining = sent
+                        while len(remaining) > self.max_parent_size:
+                            final_sents.append(remaining[:self.max_parent_size])
+                            remaining = remaining[self.max_parent_size:]
+                        if remaining:
+                            final_sents.append(remaining)
                     else:
-                        merged_parents.append(temp_parent)
-                        temp_parent = p_chunk
-            if temp_parent:
-                if merged_parents and len(temp_parent) < min_parent_size:
-                    merged_parents[-1] = merged_parents[-1].rstrip('\n') + '\n' + temp_parent.lstrip('\n')
+                        final_sents.append(sent)
+                
+                current_sub = ""
+                for sent in final_sents:
+                    if len(current_sub) + len(sent) <= self.max_parent_size:
+                        current_sub += sent
+                    else:
+                        if current_sub:
+                            split_parents.append(current_sub)
+                        current_sub = sent
+                if current_sub:
+                    split_parents.append(current_sub)
+            else:
+                split_parents.append(p_chunk)
+        parent_chunks = split_parents
+
+        # 4.6 兜底合并超短 parent_chunks (保证召回丰富文本，最小 min_parent_size 字符)
+        # 注意：此合并逻辑已从 markdown-only 改为全局生效。
+        # 对于传统非 Markdown 文本基准，若需保持旧行为，在构造时将 min_parent_size 设为 0 即可跳过合并。
+        merged_parents = []
+        temp_parent = ""
+        for p_chunk in parent_chunks:
+            if not temp_parent:
+                temp_parent = p_chunk
+            else:
+                if len(temp_parent) < self.min_parent_size and (len(temp_parent) + len(p_chunk) <= self.max_parent_size):
+                    temp_parent = temp_parent.rstrip('\n') + '\n' + p_chunk.lstrip('\n')
                 else:
                     merged_parents.append(temp_parent)
-            parent_chunks = merged_parents
+                    temp_parent = p_chunk
+        if temp_parent:
+            if merged_parents and len(temp_parent) < self.min_parent_size and (len(merged_parents[-1]) + len(temp_parent) <= self.max_parent_size):
+                merged_parents[-1] = merged_parents[-1].rstrip('\n') + '\n' + temp_parent.lstrip('\n')
+            else:
+                merged_parents.append(temp_parent)
+        parent_chunks = merged_parents
 
         # 5. 生成 Parent-Child 映射并还原占位符
         result = []
