@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-07-19
+
+### Removed
+- 根目录内部文档与运行时缓存（HANDOFF.md、walkthrough.md、cache.json 等）
+- .agents/、.claude/、.codegraph/ 等 AI 内部配置从 Git 跟踪中移除
+- scratch/ 一次性实验脚本目录（保留 check_dependencies.py）
+
+### Changed
+- 根目录文档归位：DIFY_RAG_GUIDE.md → docs/deploy/，README_GNN.md → docs/gnn/
+- 启动脚本移入 scripts/ 目录
+- tests/ 拆分：评测管线 → scripts/evaluation/，数据集 → scripts/data/，工具 → scripts/dev/
+- 更新 .gitignore，完善 20+ 条忽略规则
+- 修复 pyproject.toml 构建后端为 setuptools.build_meta
+
+### Added
+- GitHub Issue/PR 模板（bug_report、feature_request、PULL_REQUEST_TEMPLATE）
+- .handoffs/ 本地手稿存档体系（gitignored，按时间排序）
+
 ## [1.0.0] - 2025-01-27
 
 ### Added

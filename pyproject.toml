@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "advanced-rag"
-version = "1.0.0"
+version = "1.0.1"
 description = "高精度语义切片与自适应断崖重排引擎 - 让检索增强不再被低维噪音稀释"
 readme = "README.md"
 requires-python = ">=3.10"
