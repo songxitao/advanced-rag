@@ -37,7 +37,6 @@ for mod_name in _STUB_MODULES:
 collect_ignore = []
 
 # test_ppr_thresholds.py 没有 def test_* 函数，且模块级 import torch
-if _util.find_spec("torch") is None or (
-    hasattr(sys.modules.get("torch", None), "_IS_STUB")
-):
+_torch_mod = sys.modules.get("torch", None)
+if _torch_mod is None or getattr(_torch_mod, "_IS_STUB", False):
     collect_ignore.append("test_ppr_thresholds.py")
