@@ -16,15 +16,13 @@ def cosine_similarity(v1: list[float], v2: list[float]) -> float:
 def run_personalized_pagerank(
     graph: nx.Graph, 
     seed_node_id: str, 
-    top_k: int = 5, 
-    edge_threshold: float = 0.0
+    top_k: int = 5
 ) -> list[tuple[str, float]]:
     """
     以 seed_node_id 设为唯一能量源计算 2-Hop 剪枝子图的 Personalized PageRank 分数。
     :param graph: 内存 NetworkX 图
     :param seed_node_id: 起点（种子）节点 ID
     :param top_k: 捞回的 Top-K 节点数
-    :param edge_threshold: 边权重过滤阈值
     :return: 捞回的父块 parent_id 和分数的元组列表（已过滤掉起点本身）
     """
     if seed_node_id not in graph:
@@ -32,22 +30,14 @@ def run_personalized_pagerank(
     if len(graph.nodes) <= 1:
         return []
     
-    # 提取强 1 跳邻居
-    neighbors_1st = set()
-    for n in graph.neighbors(seed_node_id):
-        edge_data = graph.get_edge_data(seed_node_id, n)
-        # 防御性：若旧测试图无 weight，取无穷大确保其不被过滤
-        weight = edge_data.get("weight", float('inf'))
-        if weight >= edge_threshold:
-            neighbors_1st.add(n)
+    # 提取所有 1 跳邻居
+    neighbors_1st = set(graph.neighbors(seed_node_id))
             
-    # 提取强 2 跳邻居
+    # 提取所有 2 跳邻居
     neighbors_2nd = set()
     for n1 in neighbors_1st:
         for n in graph.neighbors(n1):
-            edge_data = graph.get_edge_data(n1, n)
-            weight = edge_data.get("weight", float('inf'))
-            if weight >= edge_threshold and n != seed_node_id:
+            if n != seed_node_id:
                 neighbors_2nd.add(n)
                 
     # 组装节点集合并提取子图
@@ -56,14 +46,6 @@ def run_personalized_pagerank(
         return []
         
     sub_graph = graph.subgraph(target_nodes).copy()
-    
-    # 过滤子图中的弱边
-    edges_to_remove = []
-    for u, v, data in sub_graph.edges(data=True):
-        weight = data.get("weight", float('inf'))
-        if weight < edge_threshold:
-            edges_to_remove.append((u, v))
-    sub_graph.remove_edges_from(edges_to_remove)
     
     # 构造 personalization 字典，仅 seed_node_id 为 1.0，其余为 0.0
     personalization = {node: 0.0 for node in sub_graph.nodes}
@@ -162,7 +144,7 @@ class GraphPostRetriever:
 
     def query_graph_enhanced(self, user_question: str, graph_search_mode: str = "heuristic_walk") -> str:
         """
-        非对称 3+2 通道配额、免检图谱及 0.5 熔断门控。
+        混合了向量候选与图游走候选的全局混合二次 Rerank。
         :param user_question: 用户提问
         :param graph_search_mode: 图检索模式，可选 "heuristic_walk"、"ppr" 或 "none"
         :return: 拼接格式化后的上下文字符串
@@ -184,24 +166,24 @@ class GraphPostRetriever:
         if not first_rerank:
             return ""
 
-        # 4. 向量自适应断崖检测：对前3个向量块(依据实际长度)做 1.5 得分差断崖检测，落差大于 1.5 则截断后续所有向量候选
-        vector_results = first_rerank[:3]
-        cutoff_idx = -1
-        for i in range(len(vector_results) - 1):
-            diff = vector_results[i]["rerank_score"] - vector_results[i+1]["rerank_score"]
-            if diff > 1.5:
-                cutoff_idx = i + 1
-                break
-        if cutoff_idx != -1:
-            vector_results = vector_results[:cutoff_idx]
-
-        # 5. 熔断门控：首位向量分数 S_seed < 0.5 时，熔断图谱，只返回上述截断后的向量候选块
+        # 4. 熔断门控：首位向量分数 S_seed < 0.5 时，熔断图谱，只返回向量候选（走旧的 1.5 得分差断崖检测和 Top 3）
         S_seed = first_rerank[0]["rerank_score"]
         if S_seed < 0.5 or graph_search_mode == "none":
-            selected = vector_results
+            # 沿用之前的逻辑：对前3个向量块做 1.5 得分差断崖检测，落差大于 1.5 则截断
+            vector_results = first_rerank[:3]
+            cutoff_idx = -1
+            for i in range(len(vector_results) - 1):
+                diff = vector_results[i]["rerank_score"] - vector_results[i+1]["rerank_score"]
+                if diff > 1.5:
+                    cutoff_idx = i + 1
+                    break
+            if cutoff_idx != -1:
+                selected = vector_results[:cutoff_idx]
+            else:
+                selected = vector_results
         else:
-            # 未熔断
-            # 以 V_1 的 parent_id 作为唯一种子节点 Seed
+            # 未熔断：
+            # 以一阶段 Rerank 的 Top 1 名向量的 parent_id 作为唯一种子节点 Seed
             seed_node_id = first_rerank[0]["metadata"].get("parent_id")
             
             graph_scores = []
@@ -209,53 +191,18 @@ class GraphPostRetriever:
                 if graph_search_mode == "heuristic_walk":
                     graph_scores = run_semantic_random_walk(self.db_adapter.graph, seed_node_id, dense_vec, top_k=5)
                 elif graph_search_mode == "ppr":
-                    import numpy as np
-                    edge_thr = float(np.exp(4 * 0.3))
                     graph_scores = run_personalized_pagerank(
                         self.db_adapter.graph, 
                         seed_node_id, 
-                        top_k=5, 
-                        edge_threshold=edge_thr
+                        top_k=5
                     )
             
-            # 解耦独立打分：
-            # 若 ppr：Score_PPR(v) = S_seed * PPR(v)
-            # 若 heuristic_walk：Score_HW(v) = S_seed * Sim(v, Q)
-            calculated_graph_scores = []
-            for pid, val in graph_scores:
-                score = S_seed * val
-                calculated_graph_scores.append((pid, score))
-            
-            # 图谱去重与比例断崖：
-            # 去除已经被截断后保留的向量块占用的 parent_id
-            vector_pids = {c["metadata"].get("parent_id") for c in vector_results}
-            filtered_graph_scores = [item for item in calculated_graph_scores if item[0] not in vector_pids]
-            
-            # 排序与比例断崖截取：
-            # 排序后的前 2 个图谱节点 G_1, G_2，如果 Score(G_2) < 0.4 * Score(G_1)，触发比例断崖，抛弃 G_2 仅保留 G_1。
-            filtered_graph_scores.sort(key=lambda x: x[1], reverse=True)
-            top_graph_results = []
-            if len(filtered_graph_scores) == 1:
-                top_graph_results = [filtered_graph_scores[0]]
-            elif len(filtered_graph_scores) >= 2:
-                g1 = filtered_graph_scores[0]
-                g2 = filtered_graph_scores[1]
-                if g2[1] < 0.4 * g1[1]:
-                    top_graph_results = [g1]
-                else:
-                    top_graph_results = [g1, g2]
-            
-            top_graph_pids = [pid for pid, score in top_graph_results]
-            
-            # 补齐图谱节点信息
-            candidates_dict = {c["metadata"]["parent_id"]: c for c in candidates}
-            graph_vector_results = []
-            for pid in top_graph_pids:
-                if pid in candidates_dict:
-                    graph_vector_results.append(candidates_dict[pid])
-                elif pid in self.db_adapter.graph:
+            # 将图候选转为 candidate dict（使用 parent_text 作为 content）
+            graph_candidates = []
+            for pid, _ in graph_scores:
+                if pid in self.db_adapter.graph:
                     node_data = self.db_adapter.graph.nodes[pid]
-                    graph_vector_results.append({
+                    graph_candidates.append({
                         "content": node_data.get("parent_text", ""),
                         "metadata": {
                             "parent_id": pid,
@@ -267,18 +214,41 @@ class GraphPostRetriever:
                         }
                     })
             
-            # GNN 空间紧邻拼接：拼接后返回的格式顺序确保为：[V_1, G_1, G_2, V_2, V_3]（或断崖裁剪后的实际子集）
-            selected = []
-            if len(vector_results) > 0:
-                selected.append(vector_results[0])
-            selected.extend(graph_vector_results)
-            if len(vector_results) > 1:
-                selected.extend(vector_results[1:])
-
+            # 去重合并：向量 Top5 + 图候选 Top5 -> 统一候选池
+            vector_candidates = first_rerank[:5]
+            vector_pids = {c["metadata"].get("parent_id") for c in vector_candidates if c.get("metadata")}
+            
+            filtered_graph_candidates = []
+            for gc in graph_candidates:
+                g_pid = gc["metadata"].get("parent_id")
+                if g_pid not in vector_pids:
+                    filtered_graph_candidates.append(gc)
+            
+            combined_candidates = vector_candidates + filtered_graph_candidates
+            
+            # 全局二次 Rerank（CrossEncoder 打分）
+            try:
+                second_rerank = self.reranker.rerank(user_question, combined_candidates, top_k=len(combined_candidates), cliff_threshold=999.0)
+            except TypeError:
+                second_rerank = self.reranker.rerank(user_question, combined_candidates, top_k=len(combined_candidates))
+            
+            # 自适应断崖截断
+            cutoff_idx = -1
+            for i in range(len(second_rerank) - 1):
+                diff = second_rerank[i]["rerank_score"] - second_rerank[i+1]["rerank_score"]
+                if diff > 1.5:
+                    cutoff_idx = i + 1
+                    break
+            if cutoff_idx != -1:
+                second_rerank = second_rerank[:cutoff_idx]
+            
+            # 取 Top5
+            selected = second_rerank[:5]
+            
         if not selected:
             return ""
 
-        # 做题阶段：统一将选出的上下文片段按照在原著中的物理先后顺序（时间线）进行重排序，提高大模型理解的丝滑度
+        # 统一将选出的上下文片段按照在原著中的物理先后顺序（时间线）进行重排序，提高大模型理解的丝滑度
         selected = sorted(selected, key=lambda x: x["metadata"].get("char_start", 0))
 
         # 6. 执行父块替换并拼接格式化后的上下文字符串

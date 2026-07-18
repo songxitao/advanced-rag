@@ -138,8 +138,8 @@ class ChromaAdapter(VectorStoreAdapter):
                 weight = float(np.exp(4 * 0.3))
                 self._add_weighted_edge(u, v, "physical", weight)
 
-        # 4. 无监督 TF-IDF 实体共现边
-        # 4.1 动态注册脱敏代号到分词器中
+        # 4. 基于每个 Chunk 局部 Top-5 特征词的跨文档实体共现连边
+        # 4.1 动态注册脱敏代号到分词器中以提升分词效果
         pattern = re.compile(r"(?:角色|代号|项目|特工)\s*[A-Za-z0-9_]+")
         words_to_register = set()
         for pid in self.graph.nodes:
@@ -148,113 +148,49 @@ class ChromaAdapter(VectorStoreAdapter):
                 for match in pattern.finditer(text):
                     words_to_register.add(match.group(0))
         for word in words_to_register:
-            jieba.add_word(word, tag='n')
+            jieba.add_word(word, tag='nz')
 
-        # 4.2 用 jieba.posseg 对父块分词，仅保留名词和英文词性。统计特征词频（提取 Top-5 关键词）并统计全局名词 DF
+        # 4.2 提取专有名词和英文词性，按局部词频只保留每个 Chunk 自身的 Top-5 特征词
         keywords = {}
-        all_entity_words_list = []
         for pid in self.graph.nodes:
             text = self.graph.nodes[pid].get("parent_text", "")
             words = []
             if text:
                 for word, flag in pseg.cut(text):
                     word_stripped = word.strip()
-                    if not word_stripped:
+                    if not word_stripped or len(word_stripped) < 2:  # 过滤单字以抑制杂音
                         continue
-                    if flag.startswith('n') or flag == 'eng':
+                    if flag in ('nr', 'ns', 'nt', 'nz', 'eng'):
                         words.append(word_stripped)
-            all_entity_words_list.append(set(words))
-            
             counter = Counter(words)
             top_5 = [w for w, _ in counter.most_common(5)]
             keywords[pid] = top_5
 
-        # 统计全局频次 DF
-        df_counter = Counter()
-        for word_set in all_entity_words_list:
-            df_counter.update(word_set)
+        # 4.3 构建反向索引 (Inverted Index) 降低跨文档连边复杂度至 O(N)
+        inverted_index = {}
+        for pid, words in keywords.items():
+            for w in words:
+                if w not in inverted_index:
+                    inverted_index[w] = []
+                inverted_index[w].append(pid)
 
-        # 计算 IDF 函数
+        # 4.4 建立跨文档实体共现边 (引入 Hub 节点自适应保护)
         N_nodes = len(self.graph.nodes)
-        def get_idf(word):
-            df_val = df_counter.get(word, 0)
-            if df_val == 0:
-                return 0.0
-            return float(np.log(1.0 + N_nodes / df_val))
-
-        # 4.3 在同一个文档内部，若两个父块共享至少一个特征词，则建立实体共现边并赋予 IDF 拉伸权重
-        for sp, nodes in doc_groups.items():
-            node_ids = [n[0] for n in nodes]
-            n_nodes = len(node_ids)
-            for i in range(n_nodes):
-                for j in range(i + 1, n_nodes):
-                    u = node_ids[i]
-                    v = node_ids[j]
-                    shared = set(keywords[u]) & set(keywords[v])
-                    if shared:
-                        sum_idf = sum(get_idf(w) for w in shared)
-                        w_base = min(1.0, sum_idf * 0.2)
-                        weight = float(np.exp(4 * w_base))
-                        self._add_weighted_edge(u, v, "entity", weight)
-
-        # 5. 局域与 ANN 语义关联边
-        # 5.1 同一文档内部：使用 NumPy 矩阵乘法批量计算余弦相似度，避免 $O(N^2)$ 双重 Python 循环
-        for sp, nodes in doc_groups.items():
-            node_ids = [n[0] for n in nodes]
-            n_nodes = len(node_ids)
-            if n_nodes < 2:
+        for w, pids in inverted_index.items():
+            n_pids = len(pids)
+            if n_pids < 2:
                 continue
-            
-            # 构建嵌入矩阵计算
-            embs = np.array([self.graph.nodes[nid]["embedding"] for nid in node_ids], dtype=np.float32)
-            norms = np.linalg.norm(embs, axis=1, keepdims=True)
-            norms[norms == 0.0] = 1e-9  # 除零保护
-            embs_normed = embs / norms
-            sim_matrix = np.dot(embs_normed, embs_normed.T)
-            
-            for i in range(n_nodes):
-                for j in range(i + 1, n_nodes):
-                    if sim_matrix[i, j] >= 0.82:
-                        u = node_ids[i]
-                        v = node_ids[j]
-                        # 语义关联边：使用实际相似度并进行指数拉伸
-                        w_base = float(sim_matrix[i, j])
-                        weight = float(np.exp(4 * w_base))
-                        self._add_weighted_edge(u, v, "semantic", weight)
+            # 自适应 Hub 词保护：若某个特征词关联节点比例超过全局 20%（最少 5 个节点），视作通用 Hub 词进行剔除
+            if n_pids > max(5, int(N_nodes * 0.2)):
+                continue
 
-        # 5.2 跨文档：批量 Query 优化，减少在数据库规模较大时频繁单次 Query 导致的 I/O 与性能退化
-        nodes_list = list(self.graph.nodes)
-        if nodes_list:
-            embs_list = [self.graph.nodes[u]["embedding"] for u in nodes_list]
-            results = self.collection.query(
-                query_embeddings=embs_list,
-                n_results=min(6, count),
-                include=["metadatas", "distances"]
-            )
-            
-            if results.get("metadatas") and results.get("distances"):
-                metas_list = results["metadatas"]
-                dists_list = results["distances"]
-                for i, u in enumerate(nodes_list):
-                    if i >= len(metas_list) or i >= len(dists_list):
-                        break
-                    src_u = self.graph.nodes[u]["source_path"]
-                    metas = metas_list[i]
-                    dists = dists_list[i]
-                    if metas:
-                        for idx, meta in enumerate(metas):
-                            if meta is None:
-                                continue
-                            dist = dists[idx]
-                            sim = 1.0 - dist
-                            if sim >= 0.85:
-                                v = meta.get("parent_id")
-                                src_v = meta.get("source_path")
-                                if v and src_u != src_v and v in self.graph:
-                                    # 语义关联边：使用实际相似度并进行指数拉伸
-                                    w_base = float(sim)
-                                    weight = float(np.exp(4 * w_base))
-                                    self._add_weighted_edge(u, v, "semantic", weight)
+            for i in range(n_pids):
+                for j in range(i + 1, n_pids):
+                    u = pids[i]
+                    v = pids[j]
+                    # 跨文档实体边：基础权重 0.4，拉伸后为 e^(4 * 0.4) ≈ 4.95，比物理边 (3.32) 稍强
+                    weight = float(np.exp(4 * 0.4))
+                    self._add_weighted_edge(u, v, "entity", weight)
 
     def add_chunks(self, chunks_data: List[Dict[str, Any]], dense_embeddings: List[List[float]]) -> None:
         """在 Chroma 里存储 child_text 作为 document，并同步重建 BM25 与 NetworkX 内存图"""
