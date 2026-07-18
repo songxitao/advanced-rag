@@ -86,7 +86,7 @@ graph TD
 
 ### 2. 启动服务与接口开发
 *   **启动微服务 (API)**：
-    运行根目录下的快捷启动脚本或在终端输入：
+    运行 `scripts/` 目录下的快捷启动脚本或在终端输入：
     ```bash
     # 自动加载 CPU/GPU 模型自适应启动 RAG 后端 API
     python src/app.py
