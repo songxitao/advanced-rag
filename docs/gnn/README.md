@@ -78,7 +78,7 @@ graph TD
 | **Heuristic Walk Graph RAG** (语义随机游走 + 全局二次重排) | **8.2** (占优) | **7.8** (占优) | **6.2** (占优) |
 
 ### 🎨 量化评测雷达图
-重构后，两路 GNN 检索在三维指标下全面包围并碾压了传统 RAG 与 Naive RAG，多跳推理召回的潜力得到完美释放。雷达图已生成并保存在：`tests/outputs/evaluation_radar.png`。
+重构后，两路 GNN 检索在三维指标下全面包围并碾压了传统 RAG 与 Naive RAG，多跳推理召回的潜力得到完美释放。雷达图已生成并保存在：`scripts/data/evaluation_radar.png`。
 
 ---
 
@@ -112,7 +112,7 @@ graph TD
 2. **启动本地测试与评估管线**：
    在 PowerShell 中运行一键管线，可一键完成“数据集生成 -> 图多轨检索 -> 本地裁判打分 -> 绘制雷达图”的全部流程：
    ```powershell
-   python tests/run_pipeline.py --all --sanguo
+   python scripts/evaluation/run_pipeline.py --all --sanguo
    ```
 3. **运行单元测试**：
    ```bash
@@ -133,5 +133,5 @@ graph TD
 ## 📂 核心代码对应链接
 *   **内存图谱自适应建图**：[database.py](file:///E:/project/advanced-rag/src/database.py) — 专有名词过滤、反向索引建边。
 *   **双轨图谱游走与全局重排**：[graph_search.py](file:///E:/project/advanced-rag/src/graph_search.py) — 全局二次 Rerank 及自适应断崖阻断。
-*   **雷达图生成与打分**：[evaluate_results.py](file:///E:/project/advanced-rag/tests/evaluate_results.py) — 本地裁判大模型打分评估。
+*   **雷达图生成与打分**：[evaluate_results.py](scripts/evaluation/evaluate_results.py) — 本地裁判大模型打分评估。
 *   **论文 RAG 实战脚本**：[query_thesis_rag.py](file:///E:/project/advanced-rag/scratch/query_thesis_rag.py) — 毕业论文 RAG 自动化检索演示。

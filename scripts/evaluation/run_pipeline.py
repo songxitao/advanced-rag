@@ -5,10 +5,10 @@ import subprocess
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 STAGES = {
-    "1": ("Stage 1: tests/evaluation_set_generator.py", "tests/evaluation_set_generator.py"),
-    "2": ("Stage 2: tests/run_retrieval.py", "tests/run_retrieval.py"),
-    "3": ("Stage 3: tests/generate_answers.py", "tests/generate_answers.py"),
-    "4": ("Stage 4: tests/evaluate_results.py", "tests/evaluate_results.py")
+    "1": ("Stage 1: scripts/evaluation/evaluation_set_generator.py", "scripts/evaluation/evaluation_set_generator.py"),
+    "2": ("Stage 2: scripts/evaluation/run_retrieval.py", "scripts/evaluation/run_retrieval.py"),
+    "3": ("Stage 3: scripts/evaluation/generate_answers.py", "scripts/evaluation/generate_answers.py"),
+    "4": ("Stage 4: scripts/evaluation/evaluate_results.py", "scripts/evaluation/evaluate_results.py")
 }
 
 def run_script(script_path, extra_args=None):

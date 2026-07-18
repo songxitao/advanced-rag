@@ -159,7 +159,7 @@ def main():
     )
 
     # 读取测试数据集
-    dataset_path = "E:/project/advanced-rag/tests/temp_data/test_sanguo_dataset.json"
+    dataset_path = "scripts/data/temp_data/test_sanguo_dataset.json"
     if not os.path.exists(dataset_path):
         print(f"❌ 数据集文件不存在: {dataset_path}。请先生成数据集。")
         sys.exit(1)
@@ -198,7 +198,7 @@ def main():
         })
 
     # 保存结果到 tests/temp_data/retrieval_sanguo_results.json
-    output_path = "E:/project/advanced-rag/tests/temp_data/retrieval_sanguo_results.json"
+    output_path = "scripts/data/temp_data/retrieval_sanguo_results.json"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)

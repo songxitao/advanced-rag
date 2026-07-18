@@ -108,19 +108,19 @@ graph TD
 
 ## 📑 评测管线操作指南 (CLI Pipeline Workflow)
 
-项目自带了一套开箱即用的多阶段评测控制中心，脚本位于 `tests/` 下。您可以通过交互式 CLI 一键调度运行：
+项目自带了一套开箱即用的多阶段评测控制中心，脚本位于 `scripts/evaluation/` 下。您可以通过交互式 CLI 一键调度运行：
 
 ```bash
 # 启动交互式控制菜单
-python tests/run_pipeline.py
+python scripts/evaluation/run_pipeline.py
 ```
 
 ### 控制菜单阶段说明
-1.  **Stage 1: 出题生成** [evaluation_set_generator.py](file:///E:/project/advanced-rag/tests/evaluation_set_generator.py)
+1.  **Stage 1: 出题生成** [evaluation_set_generator.py](scripts/evaluation/evaluation_set_generator.py)
     *   读取技术论文与本地知识库，随机提取片段，调用 Qwen 生成中英文问答对 `test_dataset.json`。
-2.  **Stage 3: 双轨答题** [generate_answers.py](file:///E:/project/advanced-rag/tests/generate_answers.py) & [patch_empty_answers.py](file:///E:/project/advanced-rag/tests/patch_empty_answers.py)
+2.  **Stage 3: 双轨答题** [generate_answers.py](scripts/evaluation/generate_answers.py) & [patch_empty_answers.py](scripts/evaluation/patch_empty_answers.py)
     *   调用本地小模型在长上下文窗口下完成答题，超时自动补答，输出 `answer_results.json`。
-3.  **Stage 4: 裁判打分与图表** [evaluate_results.py](file:///E:/project/advanced-rag/tests/evaluate_results.py)
+3.  **Stage 4: 裁判打分与图表** [evaluate_results.py](scripts/evaluation/evaluate_results.py)
     *   使用本地部署的大模型作为裁判，在三个维度量化打分，并展示对比雷达图。
 
 ---
@@ -137,7 +137,7 @@ python tests/run_pipeline.py
 | **内容精确度 (Accuracy)** | 9.2 | 9.2 | 0.00% | 针对细微技术公式和数字细节，两套引擎在初筛阶段均具有高度吻合的命中表现。 |
 
 ### 2. 评测极坐标雷达对比图
-雷达图输出保存在：[evaluation_radar.png](file:///E:/project/advanced-rag/tests/evaluation_radar.png)
+雷达图输出保存在：[evaluation_radar.png](scripts/data/evaluation_radar.png)
 
 ---
 

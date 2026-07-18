@@ -133,7 +133,9 @@ def main():
     txt_path = "tests/temp_data/三国演义白话文_disguised.txt"
     if not os.path.exists(txt_path):
         print(f"⚠️ {txt_path} 不存在，正在生成...")
-        from tests.disguise_book_generator import run_disguise_pipeline
+        import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "dev"))
+from disguise_book_generator import run_disguise_pipeline
         input_book = "E:/project/pyltp-books-master/pyltp-books-master/mybooks/Book/三国演义白话文"
         run_disguise_pipeline(input_book, "tests/temp_data")
 

@@ -46,7 +46,9 @@ def main():
     node_positions.sort(key=lambda x: x[1])
     node_index = {node: idx for idx, (node, _) in enumerate(node_positions)}
 
-    from tests.evaluation_set_generator_graph import BLACKLIST_ENTITIES
+    import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from evaluation.evaluation_set_generator_graph import BLACKLIST_ENTITIES
     core_ents = [ent for ent in BLACKLIST_ENTITIES if ent not in ["鞭打", "督邮", "大怒", "怒", "羞辱", "结义", "结盟", "盟约", "结拜", "托孤"]]
 
     def has_entity_relation(u, v):

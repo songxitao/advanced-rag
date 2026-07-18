@@ -11,8 +11,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
-INPUT_PATH = "tests/answer_results.json"
-RADAR_OUTPUT_PATH = "tests/evaluation_radar.png"
+INPUT_PATH = "scripts/data/answer_results.json"
+RADAR_OUTPUT_PATH = "scripts/data/evaluation_radar.png"
 LLM_API_URL = "http://localhost:8080/v1/chat/completions"
 MODEL_NAME = "qwen3.6-35b-a3b-opus-nothink"
 
@@ -261,7 +261,7 @@ def draw_radar_chart(scores, use_sanguo=False):
 
     plt.tight_layout()
     plt.savefig(RADAR_OUTPUT_PATH, dpi=150)
-    plt.savefig("tests/outputs/evaluation_radar.png", dpi=150)
+    plt.savefig("scripts/data/evaluation_radar.png", dpi=150)
     print(f"🎨 雷达图已保存至: {RADAR_OUTPUT_PATH} (与 tests/outputs/evaluation_radar.png)")
 
 def main():
@@ -270,11 +270,11 @@ def main():
     parser.add_argument('--sanguo', action='store_true', help='Use Sanguo dataset and 4-track context')
     args, unknown = parser.parse_known_args()
     
-    input_path = "tests/answer_results.json"
-    use_sanguo = args.sanguo or os.path.exists("tests/temp_data/answer_sanguo_results.json")
+    input_path = "scripts/data/answer_results.json"
+    use_sanguo = args.sanguo or os.path.exists("scripts/data/temp_data/answer_sanguo_results.json")
     
     if use_sanguo:
-        input_path = "tests/temp_data/answer_sanguo_results.json"
+        input_path = "scripts/data/temp_data/answer_sanguo_results.json"
         print("💡 [Evaluation Mode] Running in 4-Track Sanguo Mode...")
     else:
         print("💡 [Evaluation Mode] Running in 2-Track Default Mode...")
@@ -306,13 +306,13 @@ def main():
     print("="*40)
 
     # 保存最终得分到 json
-    scores_out_path = "tests/temp_data/evaluation_sanguo_scores.json" if use_sanguo else "tests/evaluation_scores.json"
+    scores_out_path = "scripts/data/temp_data/evaluation_sanguo_scores.json" if use_sanguo else "scripts/data/evaluation_scores.json"
     with open(scores_out_path, "w", encoding="utf-8") as f:
         json.dump(scores, f, ensure_ascii=False, indent=2)
 
     # 3. 绘制雷达图
     draw_radar_chart(scores, use_sanguo=use_sanguo)
-    print("\n🎉 评测全部完成！您可以查看 tests/evaluation_radar.png 对比量化图形。")
+    print("\n🎉 评测全部完成！您可以查看 scripts/data/evaluation_radar.png 对比量化图形。")
 
 if __name__ == "__main__":
     main()

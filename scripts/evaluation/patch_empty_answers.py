@@ -9,7 +9,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
-INPUT_PATH = "tests/answer_results.json"
+INPUT_PATH = "scripts/data/answer_results.json"
 LLM_API_URL = "http://localhost:8080/v1/chat/completions"
 MODEL_NAME = "gemma4-mtp-nothink"
 

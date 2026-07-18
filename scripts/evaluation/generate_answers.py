@@ -9,8 +9,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
-INPUT_PATH = "tests/retrieval_results.json"
-OUTPUT_PATH = "tests/answer_results.json"
+INPUT_PATH = "scripts/data/retrieval_results.json"
+OUTPUT_PATH = "scripts/data/answer_results.json"
 LLM_API_URL = "http://localhost:8080/v1/chat/completions"
 MODEL_NAME = "gemma4-mtp-nothink"
 
@@ -63,12 +63,12 @@ def main():
     args, unknown = parser.parse_known_args()
     
     # 默认值
-    input_path = "tests/retrieval_results.json"
-    output_path = "tests/answer_results.json"
-    use_sanguo = args.sanguo or os.path.exists("tests/temp_data/retrieval_sanguo_results.json")
+    input_path = "scripts/data/retrieval_results.json"
+    output_path = "scripts/data/answer_results.json"
+    use_sanguo = args.sanguo or os.path.exists("scripts/data/temp_data/retrieval_sanguo_results.json")
     
     if use_sanguo:
-        input_path = "tests/temp_data/retrieval_sanguo_results.json"
+        input_path = "scripts/data/temp_data/retrieval_sanguo_results.json"
         output_path = "tests/temp_data/answer_sanguo_results.json"
         print("💡 [Mode] Running in 4-Track Sanguo Mode...")
     else:
