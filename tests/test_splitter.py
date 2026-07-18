@@ -53,7 +53,7 @@ def test_no_punctuation_truncation():
 
 def test_dynamic_threshold():
     mock_embedding = MockEmbeddingService()
-    splitter = SemanticParentChildSplitter(embedding_service=mock_embedding, threshold=None, child_size=100)
+    splitter = SemanticParentChildSplitter(embedding_service=mock_embedding, threshold=None, child_size=100, min_parent_size=0)
     text = "第一部分。第一部分。第一部分。第一部分。第二部分。"
     chunks = splitter.create_parent_child_chunks(text)
     
