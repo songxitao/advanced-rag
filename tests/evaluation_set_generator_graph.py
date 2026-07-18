@@ -83,36 +83,38 @@ def extract_json(text: str):
     text = re.sub(r',\s*([\]}])', r'\1', text)
     return json.loads(text)
 
-def generate_graph_based_qa(node_a_text, node_b_text, start_idx):
+def generate_graph_based_qa(node_a_text, node_c_text, node_b_text, start_idx):
     prompt = f"""你是一个极其优秀的、专门用于测试 RAG 检索器图拓扑扩散能力的学术评测出题官。
-以下是两段从完全脱敏的三国小说中抽取的文本片段（在物理上它们并不相邻，但逻辑上它们通过某个角色或地点相互关联）：
+以下是三段从三国小说中抽取的文本片段（在物理上它们并不相邻，但逻辑上它们通过特定的实体和因果逻辑关联，形成 A - C - B 的推理链条）：
 
-【片段 A】（包含提问背景和线索）：
+【片段 A】（逻辑链条起点/提问背景和线索）：
 {node_a_text}
 
-【片段 B】（包含逻辑链条终点和答案）：
+【片段 C】（逻辑链条过渡桥梁/包含关键的推理衔接事实）：
+{node_c_text}
+
+【片段 B】（逻辑链条终点/包含答案）：
 {node_b_text}
 
-请结合这两个断裂片段中的事实，设计 2 道必须同时参考这两个片段才能正确回答的【跨章节多跳隐式推理问题】，并给出标准答案。这 2 道题应该从不同的逻辑角度或细节发问。
+请结合这三个片段中的事实，设计 2 道【必须跨越这三个片段】才能回答的跨章节多跳隐式推理问题，并给出标准答案。这 2 道题应该从不同的逻辑角度或细节发问。
 
 【设计准则】：
-1. 答案（ground_truth）必须且只能是片段 B 中出现的某个伪装代号，形如 `[角色_X]` 或 `[地点_Y]`。绝对不能是任何历史上真实的中文人名（如“刘备”、“曹操”等）或地名！
-2. 问题本身中绝对不能出现任何形如 `[角色_X]`、`[地点_Y]` 等代号，必须通过片段 A 中角色的外貌特征、动作、担任官职、所乘坐骑等隐式指代。
-3. 问题中绝对严禁提及【片段 A】中任何可辨识的具体情节动作或核心名词词汇（例如“鞭打”、“大怒”、“督邮”、“结义”、“怒”等）。
-4. 必须将具体的情节、动作、原因和结果，翻译为高度抽象的隐式代称（如将“结盟/结义”化为“先前确立的人物关系/盟约”；将“张飞怒鞭督邮/羞辱”化为“后续发生的突发性肢体冲突/决策”等）。
-5. 必须是“关键词绝杀”全隐式出题。问题规范示例：“前一章中确立的核心人物关系，对后一章里发生的突发性肢体冲突起到了怎样的催化作用？”。
+1. 答案（ground_truth）必须是片段 B 中出现的某个真实的中文人名或地名（如“关羽”、“许昌”等）。绝对不能包含任何伪装代号或多余的修饰字，必须仅为真实的人名或地名本身！
+2. 问题本身中绝对不能出现任何真实的历史人名或地名，必须通过片段 A 中角色的外貌特征、动作、担任官职、所乘坐骑等隐式指代。
+3. 必须设计成【三节点多跳推理】：问题的起因或线索在【片段 A】，但为了推导出最终答案，必须依赖【片段 C】中提供的衔接事实或逻辑过渡，最后指向位于【片段 B】的答案。如果只参考【片段 A】和【片段 B】，而丢失了【片段 C】作为逻辑桥梁，该问题是绝对无法被回答的。
+4. 问题中绝对严禁提及【片段 A】、【片段 C】和【片段 B】中任何可辨识的具体情节动作或核心名词词汇（例如“鞭打”、“大怒”、“督邮”、“结义”、“怒”等）。
+5. 必须将具体的情节、动作、原因和结果，翻译为高度抽象的隐式代称（如将“结盟/结义”化为“先前确立的人物关系/盟约”；将“张飞怒鞭督邮/羞辱”化为“后续发生的突发性肢体冲突/决策”等）。
 6. 问题本身也严禁使用任何著名的历史事件专有名词（如“赤壁之战”、“桃园结义”、“凤仪亭”、“连环计”、“白帝城”等）。
-7. 问题的设计机制：问题提及的实体和起因在【片段 A】，但提问指向的终点人物/地点，其代号必须位于【片段 B】。只检索到片段 A 或片段 B 之一是无法得出此答案的。
 
 请严格按照以下 JSON 格式输出包含 2 个问题字典的数组，不要包含任何多余解释、Markdown 代码标记或思考过程：
 [
   {{
-    "question": "第 1 个隐式多跳推理问题（不得出现任何代号，也不得出现任何真实历史人名/地名/典故名称/具体情节词汇）",
-    "ground_truth": "标准答案（必须是类似于 `[角色_X]` 或 `[地点_Y]` 的规范代号，不能包含其他字）"
+    "question": "第 1 个多跳推理问题（必须依赖 A-C-B 链条，不得出现任何真实历史人名/地名/典故名称/具体情节词汇）",
+    "ground_truth": "标准答案（必须是片段 B 中出现的真实中文人名或地名，如“张飞”、“荆州”，不能包含其他字）"
   }},
   {{
-    "question": "第 2 个隐式多跳推理问题（与第 1 个角度不同，不得出现任何代号，也不得出现任何真实历史人名/地名/典故名称/具体情节词汇）",
-    "ground_truth": "标准答案（必须是类似于 `[角色_X]` 或 `[地点_Y]` 的规范代号，不能包含其他字）"
+    "question": "第 2 个多跳推理问题（必须依赖 A-C-B 链条，与第 1 个角度不同，不得出现任何真实历史人名/地名/典故名称/具体情节词汇）",
+    "ground_truth": "标准答案（必须是片段 B 中出现的真实中文人名或地名，如“张飞”、“荆州”，不能包含其他字）"
   }}
 ]"""
 
@@ -159,6 +161,7 @@ def generate_graph_based_qa(node_a_text, node_b_text, start_idx):
                             valid_pairs.append({
                                 "id": start_idx + i,
                                 "node_a_context": node_a_text,
+                                "node_c_context": node_c_text,
                                 "node_b_context": node_b_text,
                                 "question": qa["question"],
                                 "ground_truth": qa["ground_truth"].strip()
@@ -176,9 +179,9 @@ def generate_graph_based_qa(node_a_text, node_b_text, start_idx):
     return None
 
 def main():
-    disguised_path = "tests/temp_data/三国演义白话文_disguised.txt"
+    disguised_path = "tests/temp_data/三国演义白话文.txt"
     if not os.path.exists(disguised_path):
-        print(f"❌ 未找到换皮小说文件: {disguised_path}。请先生成它。")
+        print(f"❌ 未找到小说原文文件: {disguised_path}。")
         sys.exit(1)
 
     print("Step 1: Initializing RAG components and building NetworkX graph...")
@@ -195,7 +198,7 @@ def main():
     db_dir = "E:/project/advanced-rag/vector_db"
     
     embedding_service = LocalEmbeddingService(device=device)
-    splitter = SemanticParentChildSplitter(embedding_service=embedding_service, threshold=None, child_size=150)
+    splitter = SemanticParentChildSplitter(embedding_service=embedding_service, threshold=None, child_size=50, min_parent_size=300, max_parent_size=800)
     db_adapter = ChromaAdapter(db_dir=db_dir)
 
     # 干净的重置，以便出题前重建最新的图谱
@@ -220,67 +223,120 @@ def main():
         reranker=None
     )
 
-    print("Adding disguised book to build NetworkX graph...")
+    print("Adding original book to build NetworkX graph...")
     coordinator.add_file(disguised_path)
     
     graph = db_adapter.graph
     print(f"Graph nodes: {len(graph.nodes)}, Graph edges: {len(graph.edges)}")
 
-    # 提取物理子图
-    physical_graph = nx.Graph()
-    physical_graph.add_nodes_from(graph.nodes)
-    for u, v, d in graph.edges(data=True):
-        if d.get("type") == "physical":
-            physical_graph.add_edge(u, v)
+    # 计算物理相对位置
+    with open(disguised_path, 'r', encoding='utf-8') as f:
+        full_text = f.read()
+    
+    node_positions = []
+    for node in graph.nodes:
+        parent_text = graph.nodes[node].get("parent_text", "")
+        pos = full_text.find(parent_text) if parent_text else -1
+        if pos == -1:
+            pos = 999999
+        node_positions.append((node, pos))
+    
+    node_positions.sort(key=lambda x: x[1])
+    node_index = {node: idx for idx, (node, _) in enumerate(node_positions)}
 
-    # 匹配“物理断裂且有强拓扑关联的黄金节点对”
-    relation_pairs = []
-    nodes = list(graph.nodes)
-    print("Searching for gold topology-related but physically distant node pairs...")
-    min_dist = 5
-    while len(relation_pairs) < 30 and min_dist >= 2:
-        relation_pairs = []
-        for v_A in nodes:
-            # 在全图上运行 PPR 捞出高关联节点
-            ppr_results = run_personalized_pagerank(graph, seed_node_id=v_A, top_k=20)
-            for v_B, ppr_score in ppr_results:
-                if v_A == v_B:
+    # 计算核心实体关联
+    core_ents = [ent for ent in BLACKLIST_ENTITIES if ent not in ["鞭打", "督邮", "大怒", "怒", "羞辱", "结义", "结盟", "盟约", "结拜", "托孤"]]
+    
+    SUPER_GLOBAL_ENTS = {"刘备", "曹操", "曹丕", "孙权", "诸葛亮"}
+    
+    def has_entity_relation(u, v):
+        if graph.has_edge(u, v):
+            text_u = graph.nodes[u].get("parent_text", "")
+            text_v = graph.nodes[v].get("parent_text", "")
+            shared = [ent for ent in core_ents if ent in text_u and ent in text_v]
+            meaningful_shared = [ent for ent in shared if ent not in SUPER_GLOBAL_ENTS]
+            return len(meaningful_shared) > 0
+        return False
+
+    print("Searching for 3-node logic chain A - (entity) - C - (entity) - B...")
+    triplets = []
+    seen_triplets = set()
+    
+    for C in graph.nodes:
+        neighbors = list(graph.neighbors(C))
+        if len(neighbors) < 2:
+            continue
+        for i in range(len(neighbors)):
+            for j in range(i + 1, len(neighbors)):
+                A = neighbors[i]
+                B = neighbors[j]
+                
+                node_A, node_B = (A, B) if A < B else (B, A)
+                triplet_key = (node_A, C, node_B)
+                if triplet_key in seen_triplets:
                     continue
-                # 必须在物理图上连通
-                if nx.has_path(physical_graph, v_A, v_B):
-                    dist = nx.shortest_path_length(physical_graph, source=v_A, target=v_B)
-                    if dist >= min_dist:
-                        # 捞出对应文本
-                        text_A = graph.nodes[v_A].get("parent_text", "")
-                        text_B = graph.nodes[v_B].get("parent_text", "")
-                        if text_A and text_B:
-                            relation_pairs.append((text_A, text_B, ppr_score))
-        if len(relation_pairs) < 30:
-            min_dist -= 1
-            print(f"Qualifying pairs too few. Reducing min_dist to {min_dist}...")
+                seen_triplets.add(triplet_key)
+                
+                if has_entity_relation(node_A, C) and has_entity_relation(C, node_B):
+                    dist = abs(node_index[node_A] - node_index[node_B])
+                    if dist >= 8:
+                        text_A = graph.nodes[node_A].get("parent_text", "")
+                        text_C = graph.nodes[C].get("parent_text", "")
+                        text_B = graph.nodes[node_B].get("parent_text", "")
+                        if len(text_A) >= 150 and len(text_C) >= 150 and len(text_B) >= 150:
+                            triplets.append((node_A, C, node_B, dist, text_A, text_C, text_B))
 
-    # 按 PPR 得分降序排序
-    relation_pairs.sort(key=lambda x: x[2], reverse=True)
-    print(f"Found {len(relation_pairs)} qualifying gold topology pairs with min_dist={min_dist}.")
+    print(f"Candidates satisfying A-C-B conditions: {len(triplets)}")
+    
+    # 按照 PPR 得分对三元组排序并选取前 30 对
+    ppr_cache = {}
+    def get_ppr_scores(seed):
+        if seed not in ppr_cache:
+            ppr_results = run_personalized_pagerank(graph, seed_node_id=seed, top_k=len(graph.nodes))
+            ppr_cache[seed] = dict(ppr_results)
+        return ppr_cache[seed]
+
+    scored_triplets = []
+    for node_A, C, node_B, dist, text_A, text_C, text_B in triplets:
+        scores_A = get_ppr_scores(node_A)
+        score = scores_A.get(C, 0.0) * scores_A.get(node_B, 0.0)
+        scored_triplets.append((node_A, C, node_B, text_A, text_C, text_B, score))
+        
+    scored_triplets.sort(key=lambda x: x[6], reverse=True)
+
+    relation_pairs = []
+    a_used = {}
+    c_used = {}
+    b_used = {}
+    for node_A, C, node_B, text_A, text_C, text_B, score in scored_triplets:
+        if len(relation_pairs) >= 30:
+            break
+        if a_used.get(node_A, 0) < 2 and c_used.get(C, 0) < 2 and b_used.get(node_B, 0) < 2:
+            relation_pairs.append((text_A, text_C, text_B, score))
+            a_used[node_A] = a_used.get(node_A, 0) + 1
+            c_used[C] = c_used.get(C, 0) + 1
+            b_used[node_B] = b_used.get(node_B, 0) + 1
+
+    print(f"Found {len(relation_pairs)} qualifying gold 3-node logic chains.")
     
     if not relation_pairs:
-        print("⚠️ 未找到任何符合条件的黄金物理断裂对，降级使用全图邻居节点...")
+        print("⚠️ 未找到任何符合条件的三节点逻辑链，降级使用物理相邻节点对...")
         for u, v, d in graph.edges(data=True):
             text_u = graph.nodes[u].get("parent_text", "")
             text_v = graph.nodes[v].get("parent_text", "")
             if text_u and text_v:
-                relation_pairs.append((text_u, text_v, 1.0))
+                relation_pairs.append((text_u, text_u, text_v, 1.0))
 
     dataset = []
     idx = 1
     
-    # 遍历这些连边对应的节点对，让大模型跨这两个断裂文本块出题
-    for node_a_text, node_b_text, _score in relation_pairs:
+    # 遍历这些三元组，让大模型跨这三个文本块出题
+    for node_a_text, node_c_text, node_b_text, _score in relation_pairs:
         if len(dataset) >= 10:
             break
             
         print(f"🤖 Generating Graph-based Q&A (Current dataset size: {len(dataset)}/10)...")
-        qa_pairs = generate_graph_based_qa(node_a_text, node_b_text, idx)
+        qa_pairs = generate_graph_based_qa(node_a_text, node_c_text, node_b_text, idx)
         if qa_pairs:
             for qa_pair in qa_pairs:
                 if len(dataset) >= 10:
@@ -289,21 +345,17 @@ def main():
                 gt_text = qa_pair.get("ground_truth", "")
                 
                 # 严格过滤
-                if "[角色_" in q_text or "角色_" in q_text or "[地点_" in q_text or "地点_" in q_text:
-                    print("  ⚠️ 提问本身泄露了代号，废弃。")
-                    continue
-                    
                 has_blacklist = False
                 for black_word in BLACKLIST_ENTITIES:
-                    if black_word in q_text or black_word in gt_text:
-                        print(f"  ⚠️ 问题或答案中包含黑名单词汇 '{black_word}'，废弃。")
+                    if black_word in q_text:
+                        print(f"  ⚠️ 问题中包含黑名单词汇 '{black_word}'，废弃。")
                         has_blacklist = True
                         break
                 if has_blacklist:
                     continue
                     
-                if not re.match(r'^\[(角色|地点)_\d+\]$', gt_text):
-                    print(f"  ⚠️ 答案格式不合规 (必须仅为 [角色_X] 或 [地点_Y]): '{gt_text}'，废弃。")
+                if not re.match(r'^[\u4e00-\u9fa5]{2,6}$', gt_text):
+                    print(f"  ⚠️ 答案格式不合规 (必须仅为 2-6 字的汉字实体): '{gt_text}'，废弃。")
                     continue
                     
                 qa_pair["id"] = idx

@@ -60,7 +60,7 @@ def align_advanced_rag(coordinator):
             coordinator.add_file(path)
 
 def align_sanguo_dataset(naive_engine, coordinator):
-    print("Cleaning existing database and aligning with disguised Sanguo Dataset...")
+    print("Cleaning existing database and aligning with Sanguo Dataset...")
     
     # 1. 彻底清空 Naive RAG
     naive_engine.clear_db()
@@ -79,16 +79,16 @@ def align_sanguo_dataset(naive_engine, coordinator):
     coordinator.db_adapter.bm25_docs = []
     coordinator.db_adapter.graph = nx.Graph()
     
-    # 3. 仅且只导入全量伪装好的新书
-    disguised_path = "tests/temp_data/三国演义白话文_disguised.txt"
+    # 3. 仅且只导入全量新书
+    disguised_path = "tests/temp_data/三国演义白话文.txt"
     if os.path.exists(disguised_path):
         filename = os.path.basename(disguised_path)
-        print(f"Adding disguised book '{filename}' to Advanced RAG...")
+        print(f"Adding book '{filename}' to Advanced RAG...")
         coordinator.add_file(disguised_path)
-        print(f"Adding disguised book '{filename}' to Naive RAG...")
+        print(f"Adding book '{filename}' to Naive RAG...")
         naive_engine.add_file(disguised_path)
     else:
-        raise FileNotFoundError(f"未找到全量伪装文本: {disguised_path}")
+        raise FileNotFoundError(f"未找到文本: {disguised_path}")
 
 def main():
     # 开启 CUDA 运行并释放线程锁
@@ -137,7 +137,7 @@ def main():
 
     db_dir = "E:/project/advanced-rag/vector_db"
     loader = DocumentLoader()
-    splitter = SemanticParentChildSplitter(embedding_service=embedding_service, threshold=None, child_size=150)
+    splitter = SemanticParentChildSplitter(embedding_service=embedding_service, threshold=None, child_size=50, min_parent_size=300, max_parent_size=800)
     db_adapter = ChromaAdapter(db_dir=db_dir)
 
     coordinator = RAGCoordinator(

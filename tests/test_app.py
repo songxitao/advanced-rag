@@ -5,6 +5,9 @@ from src.app import app
 class MockCoordinator:
     def __init__(self):
         self.files_added = []
+        self.embedding_service = None
+        self.db_adapter = None
+        self.reranker = None
 
     def add_file(self, file_path: str):
         self.files_added.append(file_path)
@@ -44,3 +47,20 @@ def test_api_validation_error(client):
     # 测试缺少字段的校验情况
     response = client.post("/retrieve", json={})
     assert response.status_code == 422
+
+
+def test_api_retrieve_graph(client):
+    from unittest.mock import patch
+    with patch("src.graph_search.GraphPostRetriever") as MockRetrieverClass:
+        mock_retriever = MockRetrieverClass.return_value
+        mock_retriever.query_graph_enhanced.return_value = "[片段1] (来源: mock_doc.txt)\n图增强检索返回的早稻田大学内容。"
+        
+        response = client.post("/retrieve_graph", json={"query": "图检索测试", "graph_search_mode": "heuristic_walk"})
+        assert response.status_code == 200
+        data = response.json()
+        assert "context" in data
+        assert "图增强检索" in data["context"]
+        
+        # 验证调用参数
+        MockRetrieverClass.assert_called_once()
+        mock_retriever.query_graph_enhanced.assert_called_once_with("图检索测试", "heuristic_walk")

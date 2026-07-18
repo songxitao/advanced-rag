@@ -4,7 +4,6 @@ import json
 import random
 import re
 import requests
-from docx import Document
 
 # Reconfigure stdout/stderr for Windows UTF-8 encoding
 if hasattr(sys.stdout, 'reconfigure'):
@@ -13,26 +12,37 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
 # 使用环境变量并提供默认路径
-DOC_CHINESE = os.getenv("DOC_CHINESE", "E:/desktop/code/New folder/paper song.docx")
-DOC_ENGLISH = os.getenv("DOC_ENGLISH", "E:/project/DeepSeek-OCR/ocr_results/44221625_LI LEI/44221625_LI LEI_merged.docx")
-OUTPUT_PATH = "tests/test_dataset.json"
+OUTPUT_PATH = "tests/temp_data/test_sanguo_dataset.json"
 LLM_API_URL = "http://localhost:8080/v1/chat/completions"
-MODEL_NAME = "qwen3.6-35b-a3b-distilled-think"
+MODEL_NAME = "qwen3.6-35b-a3b-opus-nothink"
 
-def get_semantic_paragraph_chunks(doc_path, target_length=1000):
-    if not os.path.exists(doc_path):
-        raise FileNotFoundError(f"未找到文档文件: '{doc_path}'，请确认路径是否正确。")
+# 实体过滤黑名单，防止常识和原名泄漏
+BLACKLIST_ENTITIES = [
+    "刘备", "关羽", "张飞", "曹操", "孙权", "诸葛亮", "周瑜", "吕布", "赵云", "司马懿",
+    "袁绍", "董卓", "鲁肃", "魏延", "黄忠", "马超", "庞统", "陆逊", "邓艾", "姜维",
+    "司马昭", "司马师", "曹丕", "袁术", "刘表", "刘璋", "王允", "蒋干", "孟获", "张松",
+    "夏侯惇", "夏侯渊", "张辽", "徐晃", "张郃", "太史慈", "甘宁", "吕蒙", "马岱", "典韦",
+    "荆州", "益州", "徐州", "兖州", "扬州", "冀州", "幽州", "并州", "凉州", "交州",
+    "洛阳", "建业", "成都", "长安", "汉中", "许昌", "新野", "樊城", "赤壁", "官渡", "白帝城", "托孤"
+]
+
+def get_semantic_paragraph_chunks(txt_path, target_length=800):
+    if not os.path.exists(txt_path):
+        raise FileNotFoundError(f"未找到文档文件: '{txt_path}'。")
         
-    doc = Document(doc_path)
+    with open(txt_path, 'r', encoding='utf-8') as f:
+        text = f.read()
+        
+    paragraphs = text.split('\n')
     chunks = []
     current_chunk = []
     current_length = 0
-    for p in doc.paragraphs:
-        text = p.text.strip()
-        if not text:
+    for p in paragraphs:
+        p_text = p.strip()
+        if not p_text:
             continue
-        current_chunk.append(text)
-        current_length += len(text)
+        current_chunk.append(p_text)
+        current_length += len(p_text)
         if current_length >= target_length:
             chunks.append("\n\n".join(current_chunk))
             current_chunk = []
@@ -44,43 +54,38 @@ def get_semantic_paragraph_chunks(doc_path, target_length=1000):
 def extract_json(text: str):
     """
     安全提取并解析 LLM 输出中的 JSON 对象。
-    健壮地支持过滤 <think> 标签（包括未闭合的思考块）和 markdown 代码块。
     """
-    # 健壮过滤 <think>...</think>，支持由于截断未闭合的 think 块
     text = re.sub(r'<think>[\s\S]*?(?:</think>|$)', '', text).strip()
-    
-    # 尝试匹配 ```json ... ``` 或 ``` ... ``` 块
     match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
     if match:
         text = match.group(1).strip()
-        
-    # 提取以 { 开始并以 } 结束的最长 JSON 子串
     match_braces = re.search(r'(\{[\s\S]*\})', text)
     if match_braces:
         text = match_braces.group(1).strip()
-        
-    # 清洗 LLM 输出中常见的尾随逗号错误，避免 json.loads 报错
     text = re.sub(r',\s*([\]}])', r'\1', text)
-        
     return json.loads(text)
 
 def generate_qa_pair(chunk, idx):
-    prompt = f"""你是一个严谨的学术评测出题官。请阅读以下从论文中提取的文本片段（可能是中文或英文），为其设计一个具体的技术性问题，并给出该问题在原文中能够直接印证的标准答案（Ground Truth）。
+    prompt = f"""你是一个极其严谨的、专门用于测试 RAG 检索器召回能力的学术评测出题官。
+请阅读以下从完全脱敏的三国演义片段（其中所有核心人物、核心地名都已被替换成了形如 `[角色_N]` 和 `[地点_M]` 的代号）：
 
-【语言要求】：
-如果原文是英文，请用英文出题和给出答案；如果是中文，请用中文出题和给出答案。
+【脱敏文本片段】：
+{chunk}
 
-【限制要求】：
-1. 问题必须针对文本中的核心技术细节、公式或实验结论，切忌泛泛而谈。
-2. 标准答案必须完全忠实于原文，不得夹杂任何外部知识。
-3. 请严格按照以下 JSON 格式输出，不要包含任何多余解释或 markdown 标记（如 ```json ... ```）：
+请基于上述文本，设计一个必须要跨段落/跨句子进行逻辑链式推理的问题，并给出标准答案。
+
+【出题铁律（违反任何一条则测试失败）】：
+1. 答案（ground_truth）必须且只能是文本中出现的伪装代号，形如 `[角色_X]` 或 `[地点_Y]`（例如 `[角色_24]` 或 `[地点_5]`）。绝对不能是任何历史上真实的中文人名（如“马岱”、“刘备”、“关羽”等）或真实地名！
+2. 问题本身中绝对不能出现任何形如 `[角色_X]`、`[地点_Y]` 的代号。
+3. 问题本身也严禁使用任何著名的历史事件专有名词（如“赤壁之战”、“桃园结义”、“白帝城托孤”、“连环计”、“凤仪亭”、“割发代首”等历史典故或专属事件词汇）。必须完全基于此片段中的客观物理事实描述进行逻辑指代提问。
+   * 错误示例：“在赤壁之战中被派去追杀孔明的都督是谁？”（泄露了赤壁之战和孔明两个常识词，且答案不是代号）
+   * 正确示例：“在文中因‘万事皆备只欠东风’而生病躺在床上的那位角色，其病好后派去七星坛追杀那位作法借风谋士的都督，其对应的代号是什么？”（答案：`[角色_35]`）
+
+请严格按照以下 JSON 格式输出，不要包含任何多余解释、Markdown 代码标记或思考过程：
 {{
-  "question": "问题内容",
-  "ground_truth": "标准答案内容"
-}}
-
-【原文片段】：
-{chunk}"""
+  "question": "隐式事实指代推理问题（不得出现任何代号，也不得出现任何真实历史人名/地名/典故名称）",
+  "ground_truth": "标准答案（必须是类似于 `[角色_X]` 或 `[地点_Y]` 的规范代号，不能包含其他字）"
+}}"""
     
     payload = {
         "model": MODEL_NAME,
@@ -88,7 +93,7 @@ def generate_qa_pair(chunk, idx):
             {"role": "system", "content": "You are a helpful assistant that outputs raw JSON content."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.3,
+        "temperature": 0.2,
         "max_tokens": 1024
     }
     
@@ -96,7 +101,7 @@ def generate_qa_pair(chunk, idx):
         try:
             print(f"  正在请求 API (尝试 {attempt}/3)...")
             resp = requests.post(LLM_API_URL, json=payload, timeout=60)
-            resp.raise_for_status()  # 触发 HTTP 错误状态码捕获
+            resp.raise_for_status()
             
             try:
                 response_data = resp.json()
@@ -112,7 +117,7 @@ def generate_qa_pair(chunk, idx):
                         "id": idx,
                         "source_context": chunk,
                         "question": qa["question"],
-                        "ground_truth": qa["ground_truth"]
+                        "ground_truth": qa["ground_truth"].strip()
                     }
                 else:
                     print(f"  ⚠️ 尝试 {attempt} JSON 缺少必要的键: {qa}")
@@ -125,39 +130,62 @@ def generate_qa_pair(chunk, idx):
     return None
 
 def main():
+    txt_path = "tests/temp_data/三国演义白话文_disguised.txt"
+    if not os.path.exists(txt_path):
+        print(f"⚠️ {txt_path} 不存在，正在生成...")
+        from tests.disguise_book_generator import run_disguise_pipeline
+        input_book = "E:/project/pyltp-books-master/pyltp-books-master/mybooks/Book/三国演义白话文"
+        run_disguise_pipeline(input_book, "tests/temp_data")
+
     try:
-        print("📂 Loading Chinese document...")
-        chunks_cn = get_semantic_paragraph_chunks(DOC_CHINESE)
-        print(f"📄 Generated {len(chunks_cn)} chunks from Chinese paper.")
-        
-        print("📂 Loading English document...")
-        chunks_en = get_semantic_paragraph_chunks(DOC_ENGLISH)
-        print(f"📄 Generated {len(chunks_en)} chunks from English paper.")
-    except FileNotFoundError as err:
+        print(f"📂 Loading disguised book from {txt_path}...")
+        chunks = get_semantic_paragraph_chunks(txt_path, target_length=800)
+        print(f"📄 Generated {len(chunks)} chunks from disguised book.")
+    except Exception as err:
         print(f"❌ 运行中断: {err}")
         sys.exit(1)
     
     # Set seed for reproducible sampling
     random.seed(42)
-    
-    # Sample 15 chunks from each
-    sampled_cn = random.sample(chunks_cn, min(15, len(chunks_cn)))
-    sampled_en = random.sample(chunks_en, min(15, len(chunks_en)))
-    sampled_chunks = sampled_cn + sampled_en
-    
-    # Shuffle the combined list
-    random.shuffle(sampled_chunks)
-    print(f"🎲 Sampled {len(sampled_chunks)} chunks for question generation (CN: {len(sampled_cn)}, EN: {len(sampled_en)}).")
+    random.shuffle(chunks)
+    print(f"🎲 Sampled {len(chunks)} chunks for question generation.")
     
     dataset = []
-    for idx, chunk in enumerate(sampled_chunks, 1):
-        print(f"🤖 Generating Q&A pair [{idx}/{len(sampled_chunks)}]...")
+    idx = 1
+    for chunk in chunks:
+        if len(dataset) >= 10:
+            break
+        print(f"🤖 Generating Q&A pair [{len(dataset)+1}/10]...")
         qa_pair = generate_qa_pair(chunk, idx)
         if qa_pair:
+            q_text = qa_pair.get("question", "")
+            gt_text = qa_pair.get("ground_truth", "")
+            
+            # 1. 严格过滤：问题中不得包含任何形式代号
+            if "[角色_" in q_text or "角色_" in q_text or "[地点_" in q_text or "地点_" in q_text:
+                print(f"  ⚠️ 生成的问题中包含伪装代号 '{q_text}'，废弃。")
+                continue
+                
+            # 2. 严格过滤：问题和答案中不得包含任何真实三国演义人名或地名
+            has_blacklist = False
+            for black_word in BLACKLIST_ENTITIES:
+                if black_word in q_text or black_word in gt_text:
+                    print(f"  ⚠️ 问题或答案中包含黑名单词汇 '{black_word}'，废弃。")
+                    has_blacklist = True
+                    break
+            if has_blacklist:
+                continue
+                
+            # 3. 严格过滤：答案必须是严格代号匹配，例如 `[角色_24]` 或 `[地点_5]`
+            if not re.match(r'^\[(角色|地点)_\d+\]$', gt_text):
+                print(f"  ⚠️ 答案格式不合规 (必须仅为 [角色_X] 或 [地点_Y]): '{gt_text}'，废弃。")
+                continue
+                
             dataset.append(qa_pair)
-            print(f"  ✅ Generated successfully: {qa_pair['question'][:50]}...")
+            print(f"  ✅ Generated successfully: Q: {qa_pair['question'][:50]}... A: {gt_text}")
+            idx += 1
         else:
-            print(f"  ❌ Failed to generate Q&A for chunk {idx}")
+            print(f"  ❌ Failed to generate Q&A for chunk")
             
     # Write to dataset file
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)

@@ -1,0 +1,12 @@
+{
+  "Naive RAG": {
+    "Faithfulness": 0.972,
+    "Answer Relevance": 0.955,
+    "Accuracy": 0.925
+  },
+  "Advanced RAG": {
+    "Faithfulness": 0.975,
+    "Answer Relevance": 0.968,
+    "Accuracy": 0.922
+  }
+}

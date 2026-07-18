@@ -11,14 +11,17 @@ STAGES = {
     "4": ("Stage 4: tests/evaluate_results.py", "tests/evaluate_results.py")
 }
 
-def run_script(script_path):
+def run_script(script_path, extra_args=None):
+    if extra_args is None:
+        extra_args = []
     print(f"\n>>> Running {script_path}...")
     abs_script_path = os.path.join(PROJECT_ROOT, script_path)
     try:
         # Use sys.executable to ensure we run in the same virtual environment
         env = os.environ.copy()
         env["PYTHONPATH"] = PROJECT_ROOT
-        result = subprocess.run([sys.executable, abs_script_path], cwd=PROJECT_ROOT, env=env)
+        cmd = [sys.executable, abs_script_path] + extra_args
+        result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
         if result.returncode == 0:
             print(f"\n>>> {script_path} finished successfully.")
             return True
@@ -29,7 +32,7 @@ def run_script(script_path):
         print(f"\n>>> Unexpected error running {script_path}: {e}")
         return False
 
-def run_stage(key):
+def run_stage(key, extra_args=None):
     if key not in STAGES:
         return False
     name, path = STAGES[key]
@@ -37,7 +40,7 @@ def run_stage(key):
     if not os.path.exists(abs_path):
         print(f"\n>>> Error: Script not found at {abs_path}")
         return False
-    return run_script(path)
+    return run_script(path, extra_args)
 
 def show_menu():
     print("\n" + "="*50)
@@ -55,6 +58,41 @@ def main():
         sys.stderr.reconfigure(encoding='utf-8')
     except AttributeError:
         pass
+
+    sanguo_mode = '--sanguo' in sys.argv
+    extra_args = ['--sanguo'] if sanguo_mode else []
+    if sanguo_mode:
+        STAGES["1"] = ("Stage 1: tests/evaluation_set_generator_graph.py", "tests/evaluation_set_generator_graph.py")
+
+    # Support non-interactive mode
+    if '--all' in sys.argv:
+        print("\n>>> [Non-Interactive] Running all stages in sequence...")
+        
+        # 清理旧的中间文件以保证重新运行的纯洁性
+        old_files = [
+            "tests/temp_data/test_sanguo_dataset.json",
+            "tests/temp_data/retrieval_sanguo_results.json",
+            "tests/temp_data/answer_sanguo_results.json",
+            "tests/temp_data/evaluation_sanguo_scores.json"
+        ]
+        for f in old_files:
+            abs_f = os.path.join(PROJECT_ROOT, f)
+            if os.path.exists(abs_f):
+                try:
+                    os.remove(abs_f)
+                    print(f"Removed old file: {f}")
+                except Exception as e:
+                    print(f"Warning: could not remove {f}: {e}")
+                    
+        all_success = True
+        for key in STAGES.keys():
+            if not run_stage(key, extra_args):
+                print(f"\n>>> Pipeline stopped: Stage {key} failed or missing.")
+                all_success = False
+                break
+        if all_success:
+            print("\n>>> All stages executed successfully.")
+        sys.exit(0 if all_success else 1)
 
     while True:
         show_menu()
@@ -74,14 +112,14 @@ def main():
             print("\n>>> Running all stages in sequence...")
             all_success = True
             for key in STAGES.keys():
-                if not run_stage(key):
+                if not run_stage(key, extra_args):
                     print(f"\n>>> Pipeline stopped: Stage {key} failed or missing.")
                     all_success = False
                     break
             if all_success:
                 print("\n>>> All stages executed successfully.")
         elif choice in STAGES:
-            run_stage(choice)
+            run_stage(choice, extra_args)
         else:
             print("Invalid choice, please try again.")
 
