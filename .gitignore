@@ -1,10 +1,8 @@
 __pycache__/
-.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
 .ipynb_checkpoints/
-node_modules
 tests/temp_data/
 ONBOARDING_MANUAL.md
 
@@ -53,3 +51,6 @@ walkthrough.md
 
 # Test temp data
 tests/temp_data/
+
+# VitePress build cache
+docs/.vitepress/cache/
