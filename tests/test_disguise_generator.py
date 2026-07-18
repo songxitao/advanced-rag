@@ -96,13 +96,14 @@ def test_run_disguise_pipeline_fallback(tmp_path):
         ret_alias, ret_disguised = run_disguise_pipeline(str(input_file), str(output_dir))
         assert mock_post.called
         
-    # 3. 验证是否回退到了 STATIC_ALIASES 字典
+    # 3. 验证是否回退到了 STATIC_FALLBACK 字典
     with open(ret_alias, 'r', encoding='utf-8') as f:
         aliases = json.load(f)
-    # STATIC_ALIASES 中应该有 12 个核心角色
-    assert len(aliases) == 12
-    assert "刘备" in aliases
-    assert "关羽" in aliases
+    # STATIC_FALLBACK 中有 characters 和 locations 两个顶层键
+    assert "characters" in aliases
+    assert "locations" in aliases
+    assert "刘备" in aliases["characters"]
+    assert "关羽" in aliases["characters"]
     
     # 4. 验证脱敏后的文本
     with open(ret_disguised, 'r', encoding='utf-8') as f:
