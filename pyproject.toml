@@ -21,3 +21,8 @@ packages = {find = {where = ["src"]}}
 
 [tool.setuptools.package-data]
 "*" = ["*.md", "*.txt"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
