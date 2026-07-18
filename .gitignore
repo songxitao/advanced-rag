@@ -6,3 +6,21 @@ __pycache__/
 .ipynb_checkpoints/
 node_modules
 tests/temp_data/
+ONBOARDING_MANUAL.md
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE and editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

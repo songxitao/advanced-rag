@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "advanced-rag"
+version = "1.0.0"
+description = "高精度语义切片与自适应断崖重排引擎 - 让检索增强不再被低维噪音稀释"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["rag", "semantic-chunking", "retrieval-augmented-generation", "nlp"]
+
+[project.urls]
+Homepage = "https://github.com/songxitao/advanced-rag"
+Repository = "https://github.com/songxitao/advanced-rag"
+Documentation = "https://github.com/songxitao/advanced-rag"
+
+[tool.setuptools]
+packages = {find = {where = ["src"]}}
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt"]

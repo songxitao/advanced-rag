@@ -1,0 +1,16 @@
+# requirements.lock — 轻量 CI 依赖锁
+# 只包含 GitHub Actions CI 快速验证所需的依赖
+# 重型 ML 依赖（torch, sentence-transformers 等）留本地安装
+
+pytest>=8.0
+numpy>=1.24.0
+networkx>=3.0
+chromadb>=0.5.0
+PyMuPDF>=1.23.0
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.0
+requests>=2.31.0
+jieba>=0.42.1
+mistune>=3.0
+httpx>=0.26.0

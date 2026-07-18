@@ -1,0 +1,46 @@
+# ============================================================
+# Advanced RAG — Python 依赖清单
+# ============================================================
+# 生成方式: 基于 src/ 目录实际 import + README 核心依赖
+# 生成时间: 2026-07-18
+# Python 版本: >= 3.10（推荐 3.12）
+# ============================================================
+
+# ---------- API 服务 ----------
+fastapi>=0.110.0              # Web API 框架（app.py）
+uvicorn[standard]>=0.29.0     # ASGI 服务器（运行 src.app:app）
+pydantic>=2.0.0               # 请求/响应数据模型（app.py）
+
+# ---------- 向量数据库 & 检索 ----------
+chromadb>=0.5.0               # 向量数据库客户端（database.py）
+rank-bm25>=0.2.2              # BM25 稀疏检索（database.py / rank_bm25）
+
+# ---------- 中文分词 ----------
+jieba>=0.42.1                 # 中文分词（database.py）
+
+# ---------- 语义模型 ----------
+sentence-transformers>=3.0.0  # 嵌入生成 & CrossEncoder 重排（embedding.py, reranker.py）
+
+# ---------- 图算法 ----------
+networkx>=3.0                 # 图结构构建 & Personalized PageRank（database.py, graph_search.py）
+numpy>=1.24.0                 # 向量计算（database.py, graph_search.py）
+
+# ---------- 文档处理 ----------
+PyMuPDF>=1.24.0               # PDF 解析（loader.py, import fitz）
+mistune>=3.0.0                # Markdown 解析（splitter.py）
+
+# ---------- 工具库 ----------
+requests>=2.31.0              # HTTP 请求（loader.py, import_obsidian.py）
+tqdm>=4.66.0                  # 进度条显示（README 核心依赖）
+
+# ============================================================
+# ⚠️ 重要提示：PyTorch 需要独立安装
+# ============================================================
+# embedding.py 和 reranker.py 中使用了 import torch。
+# PyTorch 因 GPU/CUDA 版本差异无法通过 pip requirements 统一管理，
+# 请根据您的设备访问 https://pytorch.org 选择合适的安装命令，
+# 例如（CPU 版本）：
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# 或（CUDA 12.1 版本）：
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# ============================================================
