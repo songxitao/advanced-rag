@@ -6,8 +6,6 @@ os.environ['SENTENCE_TRANSFORMERS_HOME'] = r'D:\my_huggingface_cache'
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 
-from sentence_transformers import CrossEncoder
-
 class RerankerService:
     def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3", device: str = None):
         """
@@ -16,6 +14,7 @@ class RerankerService:
         :param device: 运行设备, 如 "cuda" 或 "cpu"
         """
         import torch
+        from sentence_transformers import CrossEncoder
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = CrossEncoder(model_name, device=device)

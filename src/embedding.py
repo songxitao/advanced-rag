@@ -9,9 +9,6 @@ os.environ['SENTENCE_TRANSFORMERS_HOME'] = r'D:\my_huggingface_cache'
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 
-# 导入 sentence_transformers
-from sentence_transformers import SentenceTransformer
-
 class LocalEmbeddingService:
     def __init__(self, device: str = None, model_name: str = "BAAI/bge-m3"):
         """
@@ -20,6 +17,7 @@ class LocalEmbeddingService:
         :param model_name: 模型名称或本地路径，默认为 "BAAI/bge-m3"
         """
         import torch
+        from sentence_transformers import SentenceTransformer
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = SentenceTransformer(model_name, device=device)
