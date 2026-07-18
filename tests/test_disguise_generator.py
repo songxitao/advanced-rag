@@ -1,10 +1,13 @@
+import sys
 import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts', 'dev'))
+
 import json
 import pytest
 import requests
 from unittest.mock import patch, MagicMock
 import jieba
-from tests.disguise_book_generator import run_disguise_pipeline
+from disguise_book_generator import run_disguise_pipeline
 
 @pytest.fixture(autouse=True)
 def setup_jieba():

@@ -23,4 +23,4 @@ jobs:
         pip install pytest
     - name: Run tests
       run: |
-        pytest tests/ -x -q -m 'not slow' --ignore=tests/test_dataset.json
+        pytest tests/ -x -q -m 'not slow'
