@@ -37,8 +37,11 @@ def test_run_disguise_pipeline_success(tmp_path):
             {
                 "message": {
                     "content": json.dumps({
-                        "刘备": ["刘备", "玄德", "备"],
-                        "曹操": ["曹操", "孟德", "操"]
+                        "characters": {
+                            "刘备": ["刘备", "玄德", "备"],
+                            "曹操": ["曹操", "孟德", "操"]
+                        },
+                        "locations": {}
                     }, ensure_ascii=False)
                 }
             }
@@ -58,9 +61,10 @@ def test_run_disguise_pipeline_success(tmp_path):
     # 4. 验证 JSON 聚类文件内容
     with open(ret_alias, 'r', encoding='utf-8') as f:
         aliases = json.load(f)
-    assert "刘备" in aliases
-    assert "曹操" in aliases
-    assert aliases["刘备"] == ["刘备", "玄德", "备"]
+    assert "characters" in aliases
+    assert "刘备" in aliases["characters"]
+    assert "曹操" in aliases["characters"]
+    assert aliases["characters"]["刘备"] == ["刘备", "玄德", "备"]
     
     # 5. 验证脱敏后的文本
     with open(ret_disguised, 'r', encoding='utf-8') as f:
