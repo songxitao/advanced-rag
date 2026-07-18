@@ -8,6 +8,7 @@ from src.embedding import LocalEmbeddingService
 from src.database import ChromaAdapter
 from src.reranker import RerankerService
 
+@pytest.mark.slow
 def test_rag_pipeline_integration(tmp_path):
     db_dir = tmp_path / "test_integration_db"
     loader = DocumentLoader()

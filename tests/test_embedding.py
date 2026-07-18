@@ -1,6 +1,7 @@
 import pytest
 from src.embedding import LocalEmbeddingService
 
+@pytest.mark.slow
 def test_embedding_service():
     # BGE-M3 默认跑在 cuda 上。如果显卡被占用，我们确保设备在构造函数里支持自定义（测试时可传 cpu，生产用 cuda）
     service = LocalEmbeddingService(device="cpu") # 测试用 cpu 确保任何电脑均可顺利通过，无需占用显存
@@ -11,6 +12,7 @@ def test_embedding_service():
     assert isinstance(sparse, dict)
     assert len(sparse) > 0
 
+@pytest.mark.slow
 def test_embedding_service_batch():
     service = LocalEmbeddingService(device="cpu")
     texts = ["测试早稻田", "测试东大"]
@@ -19,6 +21,7 @@ def test_embedding_service_batch():
     assert len(dense_list[0]) == 1024
     assert len(dense_list[1]) == 1024
 
+@pytest.mark.slow
 def test_embedding_device():
     import torch
     service = LocalEmbeddingService()

@@ -27,6 +27,7 @@ class MockRerankerModel:
                 scores.append(0.0)
         return scores
 
+@pytest.mark.slow
 def test_reranker_service_cliff_cutoff():
     # 初始化 RerankerService (使用 CPU 模式以加载本地缓存模型)
     service = RerankerService(device="cpu")
@@ -50,6 +51,7 @@ def test_reranker_service_cliff_cutoff():
     assert selected[0]["content"] == "高相关1内容"
     assert selected[1]["content"] == "高相关2内容"
 
+@pytest.mark.slow
 def test_reranker_device_and_batch():
     import torch
     service = RerankerService()
