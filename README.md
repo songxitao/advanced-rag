@@ -1,7 +1,7 @@
 # 🚀 Advanced RAG: 高精度语义切片与自适应断崖重排引擎
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.12-blue.svg" alt="Python 3.12"/>
+  <img src="https://github.com/songxitao/advanced-rag/actions/workflows/ci.yml/badge.svg" alt="CI Status"/>
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License MIT"/>
   <img src="https://img.shields.io/badge/Conda-Supported-teal.svg" alt="Conda Supported"/>
   <img src="https://img.shields.io/badge/Device-GPU%20Accelerated-orange.svg" alt="GPU Accelerated"/>
