@@ -52,9 +52,12 @@ def run_personalized_pagerank(
     personalization[seed_node_id] = 1.0
     
     try:
+        # 检测子图是否有 weight 属性（生产图有，测试图可能没有），避免新版 NetworkX 抛异常
+        has_weight = any('weight' in d for _, _, d in sub_graph.edges(data=True))
+        weight_param = 'weight' if has_weight else None
         # 调用 nx.pagerank 计算子图节点分值
-        scores = nx.pagerank(sub_graph, alpha=0.85, personalization=personalization, max_iter=100, weight='weight')
-    except Exception:
+        scores = nx.pagerank(sub_graph, alpha=0.85, personalization=personalization, max_iter=100, weight=weight_param)
+    except Exception as e:
         # 若因图未连通或计算不收敛抛出异常，做防御返回空
         return []
     
