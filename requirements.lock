@@ -4,6 +4,7 @@
 
 pytest>=8.0
 numpy>=1.24.0
+scipy>=1.10.0      # networkx≥3.6 的 pagerank 内部强制依赖 scipy
 networkx>=3.0
 chromadb>=0.5.0
 PyMuPDF>=1.23.0

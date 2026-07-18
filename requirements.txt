@@ -23,6 +23,7 @@ sentence-transformers>=3.0.0  # 嵌入生成 & CrossEncoder 重排（embedding.p
 
 # ---------- 图算法 ----------
 networkx>=3.0                 # 图结构构建 & Personalized PageRank（database.py, graph_search.py）
+scipy>=1.10.0                 # networkx pagerank 依赖 scipy 稀疏矩阵运算
 numpy>=1.24.0                 # 向量计算（database.py, graph_search.py）
 
 # ---------- 文档处理 ----------
