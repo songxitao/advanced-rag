@@ -24,3 +24,32 @@ venv/
 # OS files
 .DS_Store
 Thumbs.db
+
+# AI/IDE internal configs
+.agents/
+.claude/
+.codegraph/
+
+# Runtime caches
+.pytest_cache/
+cache.json
+
+# Node.js dependencies
+node_modules/
+
+# Vector DB persistent data
+vector_db/
+vector_db_papers/
+
+# Scratch experiments
+scratch/
+
+# Internal documents (not for public)
+HANDOFF.md
+demo-to-oss-report.md
+oss-readiness-findings.md
+project_plan.md
+walkthrough.md
+
+# Test temp data
+tests/temp_data/
