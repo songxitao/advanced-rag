@@ -3,7 +3,6 @@ __pycache__/
 *.pyo
 *.pyd
 .ipynb_checkpoints/
-tests/temp_data/
 ONBOARDING_MANUAL.md
 
 # Python packaging
@@ -49,8 +48,6 @@ oss-readiness-findings.md
 project_plan.md
 walkthrough.md
 
-# Test temp data
-tests/temp_data/
 
 # VitePress build cache
 docs/.vitepress/cache/
